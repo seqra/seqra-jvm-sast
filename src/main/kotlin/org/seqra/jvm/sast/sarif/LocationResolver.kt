@@ -85,7 +85,10 @@ class LocationResolver(
     private val debugInfoCache = hashMapOf<JIRClassOrInterface, DebugInfo?>()
     private fun getCachedDebugInfo(cls: JIRClassOrInterface): DebugInfo? =
         debugInfoCache.computeIfAbsent(cls.mostOuterClass()) {
-            DebugInfoParser.parseOrNull(it.withAsmNode { it.sourceDebug })
+            runCatching {
+                DebugInfoParser.parseOrNull(it.withAsmNode { it.sourceDebug })
+            }.onFailure { logger.error(it) { "Debug info extraction failed" } }
+                .getOrNull()
         }
 
     private fun getCachedDebugInfo(location: IntermediateLocation): DebugInfo? {
@@ -302,6 +305,10 @@ class LocationResolver(
         val debugRange = debugInfo?.findRange(location.info.lineNumber)
         if (debugRange == null || location.info.noExtraResolve) {
             val source = getCachedSourceLocation(location.inst)
+            if (source == null) {
+                logger.warn { "Source file for ${location.info.fullyQualified} not found!" }
+                return emptyList()
+            }
             return listOf(generateThreadFlowLocation(location, source, startIdx))
         }
         val actualPosition = debugRange.mapDestToSource(location.info.lineNumber)

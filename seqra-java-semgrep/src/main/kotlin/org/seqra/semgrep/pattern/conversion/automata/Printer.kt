@@ -44,6 +44,7 @@ class PrintableSemgrepRuleAutomata(val automata: SemgrepRuleAutomata) : Printabl
             when (edge) {
                 is AutomataEdgeType.MethodCall -> "CALL($formula)"
                 is AutomataEdgeType.MethodEnter -> "ENTER($formula)"
+                is AutomataEdgeType.InitialLoopMethodCall -> "ILOOP($formula)"
             }
         }
 
@@ -61,7 +62,7 @@ class TaintRegisterStateAutomataView(
         automata.successors[node]?.toList() ?: emptyList()
 
     override fun nodeLabel(node: TaintRegisterStateAutomata.State): String =
-        "${automata.stateId(node)}${if (node.node.accept) " ACCEPT " else ""}(${node.register.assignedVars})"
+        "${automata.stateId(node)}${if (node in automata.finalAcceptStates) " ACCEPT " else ""}(${node.register.assignedVars})"
 
     override fun edgeLabel(edge: TaintRegisterStateAutomata.Edge): String =
         automataEdgeLabel(edge)
@@ -76,7 +77,10 @@ class TaintRuleGenerationContextView(
 ) : PrintableGraph<TaintRegisterStateAutomata.State, TaintRuleEdge> {
     private fun buildSuccessors(): Map<TaintRegisterStateAutomata.State, Set<TaintRuleEdge>> {
         val successors = hashMapOf<TaintRegisterStateAutomata.State, MutableSet<TaintRuleEdge>>()
-        for (edge in ctx.finalEdges) {
+        for (edge in ctx.edgesToFinalAccept) {
+            successors.getOrPut(edge.stateFrom, ::hashSetOf).add(edge)
+        }
+        for (edge in ctx.edgesToFinalDead) {
             successors.getOrPut(edge.stateFrom, ::hashSetOf).add(edge)
         }
         for (edge in ctx.edges) {
@@ -105,8 +109,11 @@ class TaintRuleGenerationContextView(
         val assignedVars = node.register.assignedVars
         val stateVar = if (node in ctx.globalStateAssignStates) "[STATE = $stateId]" else ""
         var nodeAnnotation = ""
-        if (node in ctx.automata.final) {
-            nodeAnnotation = (if (node.node.accept) "SINK" else "CLEANER")
+        if (node in ctx.automata.finalAcceptStates) {
+            nodeAnnotation = "SINK"
+        }
+        if (node in ctx.automata.finalDeadStates) {
+            nodeAnnotation = "CLEANER"
         }
         return "$stateId $assignedVars $stateVar $nodeAnnotation"
     }

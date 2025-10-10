@@ -1,3 +1,10 @@
+## 2025.10.10
+### fix: Resolve taint issues, update core, and enhance tests
+- Add fixes for missing traces and wrong taint flow
+- Remove value marks
+- Add test for parallel `patterns` usage
+- Small fixes for sarif message generation
+- Fix rules with patterns and signatures
 ## 2025.10.02
 ### feat: Add taint labels, tests, and optimize automata
 - Initial support for taint labels

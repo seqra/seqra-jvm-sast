@@ -1,0 +1,17 @@
+rules:
+  - id: i96
+    message: "message"
+    languages: [java]
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - patterns:
+              - pattern-inside: |
+                  $METHODNAME(..., SpecificData $SOURCE,...) {
+                    ...
+                  }
+          - patterns:
+              - pattern: $SOURCE.getData()
+    pattern-sinks:
+      - pattern: User.sink(...)

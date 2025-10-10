@@ -14,6 +14,7 @@ import issues.issue92
 import issues.issue93
 import issues.issue94
 import issues.issue95
+import issues.issue96
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.TestInstance
@@ -97,6 +98,9 @@ class IssuesTest : SampleBasedTest() {
 
     @Test
     fun `issue 95`() = runTest<issue95>()
+
+    @Test
+    fun `issue 96`() = runTest<issue96>()
 
     @AfterAll
     fun close() {
