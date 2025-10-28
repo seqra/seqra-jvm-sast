@@ -1,3 +1,21 @@
+## 2025.10.28
+### feat: Enhance string concat, add propagators, refactor and fix issues
+- N-ary string concat
+- Drop summary fact with rule conflict
+- Add check for StateVar creation to rule tests
+- Refactor taint edge generation
+- Add `Base64.Decoder` and `ByteArrayInputStream` propagators to config
+- Fix merge issues
+- Remove edges to cleaners with unassigned metavariables
+- Rework return stmt
+- Replace analysis-end with vulnerability verification phase
+- Add propagators for `String.replace` methods
+- Enable a bunch of disabled tests
+- Use `edgesAfter` for clearer message generation
+- Introduce return statement sources
+- Add a test for sanitizer in `pattern-not-inside` form
+- Update core
+- Fixes
 ## 2025.10.10
 ### fix: Resolve taint issues, update core, and enhance tests
 - Add fixes for missing traces and wrong taint flow

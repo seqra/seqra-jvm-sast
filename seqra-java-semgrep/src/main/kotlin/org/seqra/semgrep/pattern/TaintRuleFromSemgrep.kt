@@ -1,6 +1,5 @@
 package org.seqra.semgrep.pattern
 
-import org.seqra.dataflow.configuration.jvm.serialized.AnalysisEndSink
 import org.seqra.dataflow.configuration.jvm.serialized.SerializedFieldRule
 import org.seqra.dataflow.configuration.jvm.serialized.SerializedItem
 import org.seqra.dataflow.configuration.jvm.serialized.SerializedRule
@@ -22,11 +21,11 @@ fun TaintRuleFromSemgrep.createTaintConfig(): SerializedTaintConfig {
     return SerializedTaintConfig(
         entryPoint = rules.filterIsInstance<SerializedRule.EntryPoint>(),
         source = rules.filterIsInstance<SerializedRule.Source>(),
+        methodExitSource = rules.filterIsInstance<SerializedRule.MethodExitSource>(),
         sink = rules.filterIsInstance<SerializedRule.Sink>(),
         passThrough = rules.filterIsInstance<SerializedRule.PassThrough>(),
         cleaner = rules.filterIsInstance<SerializedRule.Cleaner>(),
         methodExitSink = rules.filterIsInstance<SerializedRule.MethodExitSink>(),
-        analysisEndSink = rules.filterIsInstance<AnalysisEndSink>(),
         methodEntrySink = rules.filterIsInstance<SerializedRule.MethodEntrySink>(),
         staticFieldSource = rules.filterIsInstance<SerializedFieldRule.SerializedStaticFieldSource>(),
     )

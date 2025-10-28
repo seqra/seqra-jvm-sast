@@ -62,13 +62,19 @@ private fun acceptIsReachable(
     return acceptIsReachable
 }
 
+private data class EdgeInfo(
+    val type: AutomataEdgeType,
+    val startNode: AutomataNode,
+    val endNode: AutomataNode,
+)
+
 private fun reverse(automata: SemgrepRuleAutomata): SemgrepRuleAutomata {
     val allNodes = mutableListOf<AutomataNode>()
     traverse(automata) {
         allNodes.add(it)
     }
     val initialNodes = mutableSetOf<AutomataNode>()
-    val newEdges = mutableListOf<Pair<AutomataEdgeType, Pair<AutomataNode, AutomataNode>>>()
+    val newEdges = mutableListOf<EdgeInfo>()
     allNodes.forEach {
         if (it.accept) {
             initialNodes.add(it)
@@ -76,21 +82,19 @@ private fun reverse(automata: SemgrepRuleAutomata): SemgrepRuleAutomata {
         it.accept = it in automata.initialNodes
         it.outEdges.forEach { edge ->
             val (type, to) = edge
-            newEdges.add(type to (to to it))
+            newEdges.add(EdgeInfo(type, startNode = to, endNode = it))
         }
         it.outEdges.clear()
     }
-    newEdges.forEach { (type, edge) ->
-        val (from, to) = edge
-        from.outEdges.add(type to to)
+    newEdges.forEach {
+        it.startNode.outEdges.add(it.type to it.endNode)
     }
 
+    val params = automata.params.copy(isDeterministic = false)
     return SemgrepRuleAutomata(
         automata.formulaManager,
         initialNodes,
-        isDeterministic = false,
-        hasMethodEnter = automata.hasMethodEnter,
-        hasEndEdges = automata.hasEndEdges,
+        params
     )
 }
 
@@ -101,7 +105,7 @@ private class EdgeBuilder(private val formulaManager: MethodFormulaManager) {
 
     private val methodCallFormulas = mutableListOf<MethodFormula>()
     private val methodEnterFormulas = mutableListOf<MethodFormula>()
-    private val methodLoopFormulas = mutableListOf<MethodFormula>()
+    private val methodExitFormulas = mutableListOf<MethodFormula>()
 
     fun addEdge(edge: AutomataEdgeType) {
         when (edge) {
@@ -110,7 +114,7 @@ private class EdgeBuilder(private val formulaManager: MethodFormulaManager) {
             AutomataEdgeType.PatternStart -> hasPatternStart = true
             is AutomataEdgeType.MethodCall -> methodCallFormulas.add(edge.formula)
             is AutomataEdgeType.MethodEnter -> methodEnterFormulas.add(edge.formula)
-            is AutomataEdgeType.InitialLoopMethodCall -> methodLoopFormulas.add(edge.formula)
+            is AutomataEdgeType.MethodExit -> methodExitFormulas.add(edge.formula)
         }
     }
 
@@ -130,17 +134,14 @@ private class EdgeBuilder(private val formulaManager: MethodFormulaManager) {
         if (methodEnterFormulas.isNotEmpty()) {
             add(AutomataEdgeType.MethodEnter(formulaManager.mkOr(methodEnterFormulas)))
         }
-        if (methodLoopFormulas.isNotEmpty()) {
-            add(AutomataEdgeType.InitialLoopMethodCall(formulaManager.mkOr(methodLoopFormulas)))
+        if (methodExitFormulas.isNotEmpty()) {
+            add(AutomataEdgeType.MethodExit(formulaManager.mkOr(methodExitFormulas)))
         }
     }
 }
 
 fun AutomataBuilderCtx.hopcroftAlgorithhm(automata: SemgrepRuleAutomata): SemgrepRuleAutomata {
-    totalizeMethodCalls(automata)
-    if (automata.hasMethodEnter) {
-        totalizeMethodEnters(metaVarInfo, automata)
-    }
+    totalizeAutomata(automata)
 
     val nodes = mutableListOf<AutomataNode>()
     val node2class = mutableMapOf<AutomataNode, Int>()
@@ -245,20 +246,19 @@ fun AutomataBuilderCtx.hopcroftAlgorithhm(automata: SemgrepRuleAutomata): Semgre
     return SemgrepRuleAutomata(
         formulaManager = formulaManager,
         initialNodes = setOf(newInitialNode),
-        isDeterministic = automata.isDeterministic,
-        hasMethodEnter = automata.hasMethodEnter,
-        hasEndEdges = automata.hasEndEdges,
+        automata.params,
     ).also {
         simplifyAutomata(it)
         removeDeadNodes(it)
     }
 }
 
-fun AutomataBuilderCtx.brzozowskiAlgorithm(automata: SemgrepRuleAutomata): SemgrepRuleAutomata {
-    if (automata.isDeterministic) {
-        return automata
+fun AutomataBuilderCtx.brzozowskiAlgorithm(startAutomata: SemgrepRuleAutomata): SemgrepRuleAutomata {
+    if (startAutomata.params.isDeterministic) {
+        return startAutomata
     }
 
+    val automata = startAutomata.deepCopy()
     val reversedNfa = reverse(automata)
     val reversedDfa = determinize(reversedNfa)
     val newNfa = reverse(reversedDfa)

@@ -33,6 +33,21 @@ class CustomTest : SampleBasedTest(configurationRequired = true) {
     @Disabled
     fun `test log injection rule`() = runTest<custom.springLogInjection>()
 
+    @Test
+    @Disabled
+    fun `test xss with sanitizer rule`() = runTest<custom.springXssSanitized>()
+
+    @Test
+    @Disabled // todo: fix totalization, then fix negative case
+    fun `test xss with sanitizer rule min`() = runTest<custom.springXssSanitizedMin>()
+
+    @Test
+    @Disabled // todo: fix totalization, then fix negative case
+    fun `test xss with sanitizer rule min no pattern ellipsis`() = runTest<custom.springXssSanitizedMinNoPatternEllipsis>()
+
+    @Test
+    fun `test RuleReturnWithNotInsideSignature str concat`() = runTest<custom.RuleReturnWithNotInsideSignatureStrConcat>(EXPECT_STATE_VAR)
+
     @AfterAll
     fun close(){
         closeRunner()

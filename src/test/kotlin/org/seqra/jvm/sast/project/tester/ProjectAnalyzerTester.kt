@@ -13,6 +13,7 @@ import org.seqra.dataflow.configuration.jvm.TaintConfigurationItem
 import org.seqra.dataflow.configuration.jvm.TaintMark
 import org.seqra.dataflow.configuration.jvm.TaintMethodEntrySink
 import org.seqra.dataflow.configuration.jvm.TaintMethodExitSink
+import org.seqra.dataflow.configuration.jvm.TaintMethodExitSource
 import org.seqra.dataflow.configuration.jvm.TaintMethodSink
 import org.seqra.dataflow.configuration.jvm.TaintMethodSource
 import org.seqra.dataflow.configuration.jvm.TaintPassThrough
@@ -146,6 +147,7 @@ private fun createTestConfig(
             TaintMethodSink(
                 method = method,
                 condition = ContainsMark(specializePosition(it, sink.position).single(), TaintMark(sink.mark)),
+                trackFactsReachAnalysisEnd = emptyList(),
                 id = sink.mark,
                 meta = meta,
             )
@@ -153,13 +155,6 @@ private fun createTestConfig(
     }
 
     override fun sinkRulesForMethodExit(
-        method: CommonMethod,
-        statement: CommonInst
-    ) = getRules(method) {
-        emptyList<TaintMethodExitSink>()
-    }
-
-    override fun sinkRulesForAnalysisEnd(
         method: CommonMethod,
         statement: CommonInst
     ) = getRules(method) {
@@ -180,6 +175,13 @@ private fun createTestConfig(
 
     override fun cleanerRulesForMethod(method: CommonMethod, statement: CommonInst) = getRules(method) {
         emptyList<TaintCleaner>()
+    }
+
+    override fun exitSourceRulesForMethod(
+        method: CommonMethod,
+        statement: CommonInst
+    ): Iterable<TaintMethodExitSource> {
+        return emptyList()
     }
 
     override fun sourceRulesForStaticField(

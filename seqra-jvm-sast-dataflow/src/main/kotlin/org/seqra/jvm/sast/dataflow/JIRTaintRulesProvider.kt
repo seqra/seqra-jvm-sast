@@ -1,11 +1,11 @@
 package org.seqra.jvm.sast.dataflow
 
+import org.seqra.dataflow.configuration.jvm.TaintConfigurationItem
+import org.seqra.dataflow.jvm.ap.ifds.taint.TaintRulesProvider
 import org.seqra.ir.api.common.CommonMethod
 import org.seqra.ir.api.common.cfg.CommonInst
 import org.seqra.ir.api.jvm.JIRField
 import org.seqra.ir.api.jvm.JIRMethod
-import org.seqra.dataflow.configuration.jvm.TaintConfigurationItem
-import org.seqra.dataflow.jvm.ap.ifds.taint.TaintRulesProvider
 import org.seqra.jvm.sast.dataflow.rules.TaintConfiguration
 
 class JIRTaintRulesProvider(
@@ -17,6 +17,10 @@ class JIRTaintRulesProvider(
 
     override fun sourceRulesForMethod(method: CommonMethod, statement: CommonInst) = getRules(method) {
         taintConfiguration.sourceForMethod(it)
+    }
+
+    override fun exitSourceRulesForMethod(method: CommonMethod, statement: CommonInst) = getRules(method) {
+        taintConfiguration.exitSourceForMethod(it)
     }
 
     override fun sinkRulesForMethod(method: CommonMethod, statement: CommonInst) = getRules(method) {
@@ -33,10 +37,6 @@ class JIRTaintRulesProvider(
 
     override fun sinkRulesForMethodExit(method: CommonMethod, statement: CommonInst) = getRules(method) {
         taintConfiguration.methodExitSinkForMethod(it)
-    }
-
-    override fun sinkRulesForAnalysisEnd(method: CommonMethod, statement: CommonInst) = getRules(method) {
-        taintConfiguration.analysisEndSinkForMethod(it)
     }
 
     override fun sinkRulesForMethodEntry(method: CommonMethod) = getRules(method) {

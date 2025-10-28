@@ -1,10 +1,11 @@
 package org.seqra.semgrep.pattern.conversion
 
+import org.seqra.org.seqra.semgrep.pattern.conversion.generateMethodInvocation
+import org.seqra.org.seqra.semgrep.pattern.conversion.parseMethodArgs
 import org.seqra.semgrep.pattern.ConcreteName
+import org.seqra.semgrep.pattern.MetavarName
 import org.seqra.semgrep.pattern.MethodInvocation
-import org.seqra.semgrep.pattern.NoArgs
 import org.seqra.semgrep.pattern.NormalizedSemgrepRule
-import org.seqra.semgrep.pattern.PatternArgumentPrefix
 import org.seqra.semgrep.pattern.SemgrepJavaPattern
 
 // todo: rewrite all AddExpr as string concat for now
@@ -21,9 +22,26 @@ fun rewriteAddExpr(rule: NormalizedSemgrepRule): List<NormalizedSemgrepRule> {
     }
 }
 
-const val generatedStringConcatMethodName = "__genStringConcat__"
+const val generatedStringConcatMethodName = "__stringConcat__"
 
 private fun generateStringConcat(first: SemgrepJavaPattern, second: SemgrepJavaPattern): SemgrepJavaPattern {
-    val args = PatternArgumentPrefix(first, PatternArgumentPrefix(second, NoArgs))
-    return MethodInvocation(ConcreteName(generatedStringConcatMethodName), obj = null, args)
+    val firstArgs = flatStringConcat(first)
+    val secondArgs = flatStringConcat(second)
+    return generateMethodInvocation(generatedStringConcatMethodName, firstArgs + secondArgs)
+}
+
+private fun flatStringConcat(pattern: SemgrepJavaPattern): List<SemgrepJavaPattern> {
+    if (pattern !is MethodInvocation) return listOf(pattern)
+
+    when (val mn = pattern.methodName) {
+        is ConcreteName -> {
+            if (mn.name == generatedStringConcatMethodName) {
+                return parseMethodArgs(pattern.args)
+            }
+        }
+
+        is MetavarName -> {}
+    }
+
+    return listOf(pattern)
 }

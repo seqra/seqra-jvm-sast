@@ -1,14 +1,12 @@
 package org.seqra.semgrep.pattern.conversion
 
-import org.seqra.semgrep.pattern.ConcreteName
+import org.seqra.org.seqra.semgrep.pattern.conversion.generateMethodInvocation
 import org.seqra.semgrep.pattern.Ellipsis
-import org.seqra.semgrep.pattern.MethodInvocation
-import org.seqra.semgrep.pattern.NoArgs
 import org.seqra.semgrep.pattern.NormalizedSemgrepRule
 import org.seqra.semgrep.pattern.SemgrepJavaPattern
 import org.seqra.semgrep.pattern.TypeName
 
-const val generatedAnyValueGeneratorMethodName = "__genAnyValue__"
+const val generatedAnyValueGeneratorMethodName = "__anyValue__"
 
 fun rewriteAssignEllipsis(rule: NormalizedSemgrepRule): List<NormalizedSemgrepRule> {
     val rewriter = object : PatternRewriter {
@@ -31,5 +29,5 @@ fun rewriteAssignEllipsis(rule: NormalizedSemgrepRule): List<NormalizedSemgrepRu
 }
 
 private val anyValueCall by lazy {
-    MethodInvocation(ConcreteName(generatedAnyValueGeneratorMethodName), obj = null, NoArgs)
+    generateMethodInvocation(generatedAnyValueGeneratorMethodName, emptyList())
 }

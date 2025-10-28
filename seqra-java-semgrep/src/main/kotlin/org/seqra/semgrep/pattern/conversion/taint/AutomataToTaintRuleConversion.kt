@@ -1,14 +1,10 @@
 package org.seqra.semgrep.pattern.conversion.taint
 
-import kotlinx.collections.immutable.PersistentMap
-import kotlinx.collections.immutable.persistentHashMapOf
-import org.seqra.dataflow.configuration.jvm.serialized.AnalysisEndSink
 import org.seqra.dataflow.configuration.jvm.serialized.PositionBase
 import org.seqra.dataflow.configuration.jvm.serialized.PositionBaseWithModifiers
 import org.seqra.dataflow.configuration.jvm.serialized.SerializedCondition
 import org.seqra.dataflow.configuration.jvm.serialized.SerializedCondition.AnnotationParamPatternMatcher
 import org.seqra.dataflow.configuration.jvm.serialized.SerializedCondition.AnnotationParamStringMatcher
-import org.seqra.dataflow.configuration.jvm.serialized.SerializedCondition.Companion.mkFalse
 import org.seqra.dataflow.configuration.jvm.serialized.SerializedCondition.ConstantCmpType
 import org.seqra.dataflow.configuration.jvm.serialized.SerializedCondition.ConstantType
 import org.seqra.dataflow.configuration.jvm.serialized.SerializedCondition.ConstantValue
@@ -21,15 +17,10 @@ import org.seqra.dataflow.configuration.jvm.serialized.SerializedTaintAssignActi
 import org.seqra.dataflow.configuration.jvm.serialized.SerializedTaintCleanAction
 import org.seqra.dataflow.configuration.jvm.serialized.SinkMetaData
 import org.seqra.dataflow.configuration.jvm.serialized.SinkRule
-import org.seqra.dataflow.util.PersistentBitSet
-import org.seqra.dataflow.util.PersistentBitSet.Companion.emptyPersistentBitSet
-import org.seqra.dataflow.util.contains
-import org.seqra.dataflow.util.forEach
-import org.seqra.dataflow.util.toBitSet
+import org.seqra.org.seqra.semgrep.pattern.Mark
 import org.seqra.org.seqra.semgrep.pattern.conversion.automata.OperationCancelation
 import org.seqra.semgrep.pattern.MetaVarConstraint
 import org.seqra.semgrep.pattern.MetaVarConstraintFormula
-import org.seqra.semgrep.pattern.MetaVarConstraints
 import org.seqra.semgrep.pattern.ResolvedMetaVarInfo
 import org.seqra.semgrep.pattern.RuleWithMetaVars
 import org.seqra.semgrep.pattern.SemgrepErrorEntry.Reason
@@ -51,13 +42,10 @@ import org.seqra.semgrep.pattern.conversion.SpecificBoolValue
 import org.seqra.semgrep.pattern.conversion.SpecificStringValue
 import org.seqra.semgrep.pattern.conversion.TypeNamePattern
 import org.seqra.semgrep.pattern.conversion.automata.AutomataBuilderCtx
-import org.seqra.semgrep.pattern.conversion.automata.AutomataEdgeType
 import org.seqra.semgrep.pattern.conversion.automata.AutomataNode
 import org.seqra.semgrep.pattern.conversion.automata.ClassModifierConstraint
 import org.seqra.semgrep.pattern.conversion.automata.MethodConstraint
 import org.seqra.semgrep.pattern.conversion.automata.MethodEnclosingClassName
-import org.seqra.semgrep.pattern.conversion.automata.MethodFormula.Cube
-import org.seqra.semgrep.pattern.conversion.automata.MethodFormulaManager
 import org.seqra.semgrep.pattern.conversion.automata.MethodModifierConstraint
 import org.seqra.semgrep.pattern.conversion.automata.MethodName
 import org.seqra.semgrep.pattern.conversion.automata.MethodSignature
@@ -67,9 +55,6 @@ import org.seqra.semgrep.pattern.conversion.automata.Position
 import org.seqra.semgrep.pattern.conversion.automata.Predicate
 import org.seqra.semgrep.pattern.conversion.automata.SemgrepRuleAutomata
 import org.seqra.semgrep.pattern.conversion.automata.operations.brzozowskiAlgorithm
-import org.seqra.semgrep.pattern.conversion.generatedAnyValueGeneratorMethodName
-import org.seqra.semgrep.pattern.conversion.generatedReturnValueMethod
-import org.seqra.semgrep.pattern.conversion.generatedStringConcatMethodName
 import org.seqra.semgrep.pattern.conversion.taint.TaintRegisterStateAutomata.Edge
 import org.seqra.semgrep.pattern.conversion.taint.TaintRegisterStateAutomata.EdgeCondition
 import org.seqra.semgrep.pattern.conversion.taint.TaintRegisterStateAutomata.EdgeEffect
@@ -77,9 +62,9 @@ import org.seqra.semgrep.pattern.conversion.taint.TaintRegisterStateAutomata.Met
 import org.seqra.semgrep.pattern.conversion.taint.TaintRegisterStateAutomata.State
 import org.seqra.semgrep.pattern.conversion.taint.TaintRegisterStateAutomata.StateRegister
 import org.seqra.semgrep.pattern.transform
-import java.util.BitSet
-import java.util.IdentityHashMap
 import kotlin.time.Duration.Companion.seconds
+
+private val automataCreationTimeout = 2.seconds
 
 fun convertToTaintRules(
     rule: SemgrepRule<RuleWithMetaVars<SemgrepRuleAutomata, ResolvedMetaVarInfo>>,
@@ -90,12 +75,6 @@ fun convertToTaintRules(
     is SemgrepMatchingRule -> RuleConversionCtx(ruleId, meta, semgrepRuleTrace).convertMatchingRuleToTaintRules(rule)
     is SemgrepTaintRule -> RuleConversionCtx(ruleId, meta, semgrepRuleTrace).convertTaintRuleToTaintRules(rule)
 }
-
-private class RuleConversionCtx(
-    val ruleId: String,
-    val meta: SinkMetaData,
-    val semgrepRuleTrace: SemgrepRuleLoadStepTrace
-)
 
 private fun RuleConversionCtx.safeConvertToTaintRules(
     name: String,
@@ -157,7 +136,7 @@ private fun RuleConversionCtx.convertTaintRuleToTaintRules(
 
     fun taintMark(label: SemgrepTaintLabel?): String {
         val labelSuffix = label?.label?.let { "_$it" } ?: ""
-        return "$ruleId#taint$labelSuffix"
+        return "$ruleId#${Mark.GeneralTaintName}$labelSuffix"
     }
 
     for ((i, source) in rule.sources.withIndex()) {
@@ -170,11 +149,13 @@ private fun RuleConversionCtx.convertTaintRuleToTaintRules(
 
         generatedRules += safeConvertToTaintRules("$ruleId: source #$i", source.pattern) { pattern ->
             val sourceCtx = convertTaintSourceRule(i, pattern, generateRequires = source.requires != null)
+                ?: return@safeConvertToTaintRules emptyList()
 
-            sourceCtx.flatMap {
-                val ctx = SinkRuleGenerationCtx(it.requirementVars, it.requirementStateId, requiresVarName, it.ctx)
-                ctx.generateTaintSourceRules(it.stateVars, taintMarkName, semgrepRuleTrace)
-            }
+            val ctx = SinkRuleGenerationCtx(
+                sourceCtx.requirementVars, sourceCtx.requirementStateId,
+                requiresVarName, sourceCtx.ctx
+            )
+            ctx.generateTaintSourceRules(sourceCtx.stateVars, taintMarkName, semgrepRuleTrace)
         }.orEmpty()
     }
 
@@ -193,22 +174,21 @@ private fun RuleConversionCtx.convertTaintRuleToTaintRules(
         }
 
         generatedRules += safeConvertToTaintRules("$ruleId: sink #$i", sink.pattern) { pattern ->
-            val sinkContexts = convertTaintSinkRule(i, pattern)
+            val (ctx, stateVars, stateId) = convertTaintSinkRule(i, pattern)
+                ?: return@safeConvertToTaintRules emptyList()
 
-            sinkContexts.flatMap { (ctx, stateVars, stateId) ->
-                sinkRequiresMarks.flatMap { taintMarkName ->
-                    val sinkCtx = SinkRuleGenerationCtx(stateVars, stateId, taintMarkName, ctx)
-                    sinkCtx.generateTaintSinkRules(ruleId, meta, semgrepRuleTrace) { _, cond ->
-                        if (cond is SerializedCondition.True) {
-                            semgrepRuleTrace.error(
-                                "Taint rule $ruleId match anything",
-                                Reason.WARNING,
-                            )
-                            return@generateTaintSinkRules false
-                        }
-
-                        true
+            sinkRequiresMarks.flatMap { taintMarkName ->
+                val sinkCtx = SinkRuleGenerationCtx(stateVars, stateId, taintMarkName, ctx)
+                sinkCtx.generateTaintSinkRules(ruleId, meta, semgrepRuleTrace) { _, cond ->
+                    if (cond is SerializedCondition.True) {
+                        semgrepRuleTrace.error(
+                            "Taint rule $ruleId match anything",
+                            Reason.WARNING,
+                        )
+                        return@generateTaintSinkRules false
                     }
+
+                    true
                 }
             }
         }.orEmpty()
@@ -219,12 +199,12 @@ private fun RuleConversionCtx.convertTaintRuleToTaintRules(
             val fromVar = MetavarAtom.create(pass.from)
             val toVar = MetavarAtom.create(pass.to)
 
-            val passCtx = generatePassRule(i, pattern, fromVar, toVar)
-            passCtx.flatMap { (ctx, stateId) ->
-                taintMarks.flatMap { taintMarkName ->
-                    val sinkCtx = SinkRuleGenerationCtx(setOf(fromVar), stateId, taintMarkName, ctx)
-                    sinkCtx.generateTaintPassRules(fromVar, toVar, taintMarkName, semgrepRuleTrace)
-                }
+            val (ctx, stateId) = generatePassRule(i, pattern, fromVar, toVar)
+                ?: return@safeConvertToTaintRules emptyList()
+
+            taintMarks.flatMap { taintMarkName ->
+                val sinkCtx = SinkRuleGenerationCtx(setOf(fromVar), stateId, taintMarkName, ctx)
+                sinkCtx.generateTaintPassRules(fromVar, toVar, taintMarkName, semgrepRuleTrace)
             }
         }.orEmpty()
     }
@@ -234,10 +214,10 @@ private fun RuleConversionCtx.convertTaintRuleToTaintRules(
         // todo: sanitizer focus metavar
         generatedRules += safeConvertToTaintRules("$ruleId: sanitizer #$i", sanitizer.pattern) {
             val sanitizerCtx = convertTaintSourceRule(i, sanitizer.pattern, generateRequires = false)
-            sanitizerCtx.flatMap {
-                taintMarks.flatMap { taintMarkName ->
-                    it.ctx.generateTaintSanitizerRules(taintMarkName, semgrepRuleTrace)
-                }
+                ?: return@safeConvertToTaintRules emptyList()
+
+            taintMarks.flatMap { taintMarkName ->
+                sanitizerCtx.ctx.generateTaintSanitizerRules(taintMarkName, semgrepRuleTrace)
             }
         }.orEmpty()
     }
@@ -251,57 +231,53 @@ private fun RuleConversionCtx.generatePassRule(
     rule: RuleWithMetaVars<SemgrepRuleAutomata, ResolvedMetaVarInfo>,
     fromMetaVar: MetavarAtom,
     toMetaVar: MetavarAtom
-): List<Pair<TaintRuleGenerationCtx, Int>> {
+): Pair<TaintRuleGenerationCtx, Int>? {
     val automata = rule.rule
 
-    val taintAutomatas = createAutomataWithEdgeElimination(
-        automata.formulaManager, rule.metaVarInfo, automata.initialNode
+    val taintAutomata = createAutomataWithEdgeElimination(
+        automata.formulaManager, rule.metaVarInfo, automata.initialNode, automataCreationTimeout
+    ) ?: return null
+
+    val initialStateId = taintAutomata.stateId(taintAutomata.initial)
+    val initialRegister = StateRegister(mapOf(fromMetaVar to initialStateId))
+    val newInitial = taintAutomata.initial.copy(register = initialRegister)
+    val taintAutomataWithState = taintAutomata.replaceInitialState(newInitial)
+
+    val taintEdges = generateAutomataWithTaintEdges(
+        taintAutomataWithState, rule.metaVarInfo,
+        automataId = "$ruleId#pass_$passIdx", acceptStateVars = setOf(toMetaVar)
     )
 
-    return taintAutomatas.map { taintAutomata ->
-        val initialStateId = taintAutomata.stateId(taintAutomata.initial)
-        val initialRegister = StateRegister(mapOf(fromMetaVar to initialStateId))
-        val newInitial = taintAutomata.initial.copy(register = initialRegister)
-        val taintAutomataWithState = taintAutomata.replaceInitialState(newInitial)
-
-        val taintEdges = generateAutomataWithTaintEdges(
-            taintAutomataWithState, rule.metaVarInfo,
-            automataId = "$ruleId#pass_$passIdx", acceptStateVars = setOf(toMetaVar)
-        )
-
-        taintEdges to initialStateId
-    }
+    return taintEdges to initialStateId
 }
 
 // todo: check sink behaviour with multiple focus meta vars
 private fun RuleConversionCtx.convertTaintSinkRule(
     sinkIdx: Int,
     rule: RuleWithMetaVars<SemgrepRuleAutomata, ResolvedMetaVarInfo>
-): List<Triple<TaintRuleGenerationCtx, Set<MetavarAtom>, Int>> {
+): Triple<TaintRuleGenerationCtx, Set<MetavarAtom>, Int>? {
     val automata = rule.rule
 
-    val taintAutomatas = createAutomataWithEdgeElimination(
-        automata.formulaManager, rule.metaVarInfo, automata.initialNode
+    val taintAutomata = createAutomataWithEdgeElimination(
+        automata.formulaManager, rule.metaVarInfo, automata.initialNode, automataCreationTimeout
+    ) ?: return null
+
+    val (sinkAutomata, stateMetaVars) = ensureSinkStateVars(
+        taintAutomata,
+        rule.metaVarInfo.focusMetaVars.map { MetavarAtom.create(it) }.toSet()
     )
 
-    return taintAutomatas.map { taintAutomata ->
-        val (sinkAutomata, stateMetaVars) = ensureSinkStateVars(
-            taintAutomata,
-            rule.metaVarInfo.focusMetaVars.map { MetavarAtom.create(it) }.toSet()
-        )
+    val initialStateId = sinkAutomata.stateId(sinkAutomata.initial)
+    val initialRegister = StateRegister(stateMetaVars.associateWith { initialStateId })
+    val newInitial = sinkAutomata.initial.copy(register = initialRegister)
+    val sinkAutomataWithState = sinkAutomata.replaceInitialState(newInitial)
 
-        val initialStateId = sinkAutomata.stateId(sinkAutomata.initial)
-        val initialRegister = StateRegister(stateMetaVars.associateWith { initialStateId })
-        val newInitial = sinkAutomata.initial.copy(register = initialRegister)
-        val sinkAutomataWithState = sinkAutomata.replaceInitialState(newInitial)
+    val taintEdges = generateAutomataWithTaintEdges(
+        sinkAutomataWithState, rule.metaVarInfo,
+        automataId = "$ruleId#sink_$sinkIdx", acceptStateVars = emptySet()
+    )
 
-        val taintEdges = generateAutomataWithTaintEdges(
-            sinkAutomataWithState, rule.metaVarInfo,
-            automataId = "$ruleId#sink_$sinkIdx", acceptStateVars = emptySet()
-        )
-
-        Triple(taintEdges, stateMetaVars, initialStateId)
-    }
+    return Triple(taintEdges, stateMetaVars, initialStateId)
 }
 
 private data class SourceRuleGenerationCtx(
@@ -315,42 +291,40 @@ private fun RuleConversionCtx.convertTaintSourceRule(
     sourceIdx: Int,
     rule: RuleWithMetaVars<SemgrepRuleAutomata, ResolvedMetaVarInfo>,
     generateRequires: Boolean
-): List<SourceRuleGenerationCtx> {
+): SourceRuleGenerationCtx? {
     val automata = rule.rule
 
-    val taintAutomatas = createAutomataWithEdgeElimination(
-        automata.formulaManager, rule.metaVarInfo, automata.initialNode
+    val taintAutomata = createAutomataWithEdgeElimination(
+        automata.formulaManager, rule.metaVarInfo, automata.initialNode, automataCreationTimeout
+    ) ?: return null
+
+    val (rawSourceAutomata, stateMetaVars) = ensureSourceStateVars(
+        taintAutomata,
+        rule.metaVarInfo.focusMetaVars.map { MetavarAtom.create(it) }.toSet()
     )
 
-    return taintAutomatas.map { taintAutomata ->
-        val (rawSourceAutomata, stateMetaVars) = ensureSourceStateVars(
-            taintAutomata,
-            rule.metaVarInfo.focusMetaVars.map { MetavarAtom.create(it) }.toSet()
-        )
+    val (sourceAutomata, requirementVars, requirementStateId) = if (generateRequires) {
+        val (sourceAutomataWithReq, requirementVars) = ensureSinkStateVars(rawSourceAutomata, emptySet())
 
-        val (sourceAutomata, requirementVars, requirementStateId) = if (generateRequires) {
-            val (sourceAutomataWithReq, requirementVars) = ensureSinkStateVars(rawSourceAutomata, emptySet())
-
-            val initialStateId = sourceAutomataWithReq.stateId(sourceAutomataWithReq.initial)
-            val initialRegister = StateRegister(requirementVars.associateWith { initialStateId })
-            val newInitial = sourceAutomataWithReq.initial.copy(register = initialRegister)
-            val sourceAutomataWithState = sourceAutomataWithReq.replaceInitialState(newInitial)
-            Triple(sourceAutomataWithState, requirementVars, initialStateId)
-        } else {
-            Triple(rawSourceAutomata, emptySet(), -1)
-        }
-
-        val taintEdges = generateAutomataWithTaintEdges(
-            sourceAutomata, rule.metaVarInfo,
-            automataId = "$ruleId#source_$sourceIdx", acceptStateVars = stateMetaVars
-        )
-
-        val finalAcceptEdges = taintEdges.edgesToFinalAccept
-        val assignedStateVars = finalAcceptEdges.flatMapTo(hashSetOf()) { it.stateTo.register.assignedVars.keys }
-        assignedStateVars.retainAll(stateMetaVars)
-
-        SourceRuleGenerationCtx(taintEdges, assignedStateVars, requirementVars, requirementStateId)
+        val initialStateId = sourceAutomataWithReq.stateId(sourceAutomataWithReq.initial)
+        val initialRegister = StateRegister(requirementVars.associateWith { initialStateId })
+        val newInitial = sourceAutomataWithReq.initial.copy(register = initialRegister)
+        val sourceAutomataWithState = sourceAutomataWithReq.replaceInitialState(newInitial)
+        Triple(sourceAutomataWithState, requirementVars, initialStateId)
+    } else {
+        Triple(rawSourceAutomata, emptySet(), -1)
     }
+
+    val taintEdges = generateAutomataWithTaintEdges(
+        sourceAutomata, rule.metaVarInfo,
+        automataId = "$ruleId#source_$sourceIdx", acceptStateVars = stateMetaVars
+    )
+
+    val finalAcceptEdges = taintEdges.edgesToFinalAccept
+    val assignedStateVars = finalAcceptEdges.flatMapTo(hashSetOf()) { it.stateTo.register.assignedVars.keys }
+    assignedStateVars.retainAll(stateMetaVars)
+
+    return SourceRuleGenerationCtx(taintEdges, assignedStateVars, requirementVars, requirementStateId)
 }
 
 private fun ensureSinkStateVars(
@@ -370,16 +344,6 @@ private fun ensureSinkStateVars(
 
     val resultAutomata = newAutomata.build(automata.formulaManager, newInitialState)
     return resultAutomata to setOf(freshVar)
-}
-
-private class TaintRegisterStateAutomataBuilder {
-    val successors = hashMapOf<State, MutableSet<Pair<Edge, State>>>()
-    val acceptStates = hashSetOf<State>()
-    val deadStates = hashSetOf<State>()
-    val nodeIndex = hashMapOf<AutomataNode, Int>()
-
-    fun build(manager: MethodFormulaManager, initial: State) =
-        TaintRegisterStateAutomata(manager, initial, acceptStates, deadStates, successors, nodeIndex)
 }
 
 private fun ensureSinkStateVars(
@@ -428,8 +392,9 @@ private fun ensureSinkStateVars(
                 }
             }
 
-            Edge.AnalysisEnd,
-            is Edge.MethodEnter -> continue
+            is Edge.AnalysisEnd,
+            is Edge.MethodEnter,
+            is Edge.MethodExit -> continue
         }
     }
 
@@ -523,7 +488,23 @@ private fun ensureSourceStateVars(
                     edgeReplacement += EdgeReplacement(srcState, dstState, edge, modifiedEdge)
                 }
 
-                Edge.AnalysisEnd -> {
+                is Edge.MethodExit -> {
+                    val positivePredicate = edge.condition.findPositivePredicate() ?: continue
+                    val effectVars = edge.effect.assignMetaVar.toMutableMap()
+
+                    val condition = ParamConstraint(
+                        Position.Argument(Position.ArgumentIndex.Concrete(idx = 0)),
+                        IsMetavar(freshVar)
+                    )
+                    val predicate = Predicate(positivePredicate.signature, condition)
+                    effectVars[freshVar] = listOf(MethodPredicate(predicate, negated = false))
+                    val effect = EdgeEffect(effectVars)
+                    val modifiedEdge = Edge.MethodExit(edge.condition, effect)
+
+                    edgeReplacement += EdgeReplacement(srcState, dstState, edge, modifiedEdge)
+                }
+
+                is Edge.AnalysisEnd -> {
                     unprocessedStates.add(srcState)
                 }
             }
@@ -589,174 +570,24 @@ private fun RuleConversionCtx.convertAutomataToTaintRules(
     automata: SemgrepRuleAutomata,
     automataId: String,
 ): List<SerializedItem> {
-    val taintAutomatas = createAutomataWithEdgeElimination(
-        automata.formulaManager, metaVarInfo, automata.initialNode
+    val taintAutomata = createAutomataWithEdgeElimination(
+        automata.formulaManager, metaVarInfo, automata.initialNode, automataCreationTimeout
+    ) ?: return emptyList()
+
+    val ctx = generateAutomataWithTaintEdges(
+        taintAutomata, metaVarInfo, automataId, acceptStateVars = emptySet()
     )
 
-    return taintAutomatas.flatMap { taintAutomata ->
-        val ctx = generateAutomataWithTaintEdges(
-            taintAutomata, metaVarInfo, automataId, acceptStateVars = emptySet()
-        )
-
-        ctx.generateTaintSinkRules(ruleId, meta, semgrepRuleTrace) { function, cond ->
-            if (function.matchAnything() && cond is SerializedCondition.True) {
-                semgrepRuleTrace.error(
-                    "Rule $ruleId match anything",
-                    Reason.WARNING,
-                )
-                return@generateTaintSinkRules false
-            }
-
-            true
-        }
-    }
-}
-
-private fun RuleConversionCtx.createAutomataWithEdgeElimination(
-    formulaManager: MethodFormulaManager,
-    metaVarInfo: ResolvedMetaVarInfo,
-    initialNode: AutomataNode
-): List<TaintRegisterStateAutomata> {
-    val registerAutomata = createAutomata(formulaManager, metaVarInfo, initialNode)
-    return registerAutomata.mapNotNull { automata ->
-        val anyValueGeneratorEdgeEliminator = edgeTypePreservingEdgeEliminator(::eliminateAnyValueGenerator)
-        val automataWithoutGeneratedEdges = eliminateEdges(
-            automata,
-            anyValueGeneratorEdgeEliminator,
-            ValueGeneratorCtx.EMPTY
-        )
-
-        val stringConcatEdgeEliminator = edgeTypePreservingEdgeEliminator(::eliminateStringConcat)
-        val result = eliminateEdges(
-            automataWithoutGeneratedEdges,
-            stringConcatEdgeEliminator,
-            StringConcatCtx.EMPTY
-        )
-
-        if (result.successors[result.initial].isNullOrEmpty()) {
-            semgrepRuleTrace.error("Empty automata after generated edge elimination", Reason.WARNING)
-            return@mapNotNull null
+    return ctx.generateTaintSinkRules(ruleId, meta, semgrepRuleTrace) { function, cond ->
+        if (function.matchAnything() && cond is SerializedCondition.True) {
+            semgrepRuleTrace.error(
+                "Rule $ruleId match anything",
+                Reason.WARNING,
+            )
+            return@generateTaintSinkRules false
         }
 
-        result
-    }
-}
-
-private fun RuleConversionCtx.generateAutomataWithTaintEdges(
-    automata: TaintRegisterStateAutomata,
-    metaVarInfo: ResolvedMetaVarInfo,
-    automataId: String,
-    acceptStateVars: Set<MetavarAtom>
-): TaintRuleGenerationCtx {
-    val simulated = simulateAutomata(automata)
-    val cleaned = removeUnreachabeStates(simulated)
-    val liveAutomata = eliminateDeadVariables(cleaned, acceptStateVars)
-    val cleanAutomata = cleanupAutomata(liveAutomata, metaVarInfo)
-    val generatedEdges =  generateTaintEdges(cleanAutomata, metaVarInfo, automataId)
-    val resultAutomata = cleanupAutomata(generatedEdges)
-    return resultAutomata
-}
-
-data class TaintRegisterStateAutomata(
-    val formulaManager: MethodFormulaManager,
-    val initial: State,
-    val finalAcceptStates: Set<State>,
-    val finalDeadStates: Set<State>,
-    val successors: Map<State, Set<Pair<Edge, State>>>,
-    val nodeIndex: Map<AutomataNode, Int>
-) {
-    data class StateRegister(
-        val assignedVars: Map<MetavarAtom, Int>,
-    )
-
-    data class State(
-        val node: AutomataNode,
-        val register: StateRegister
-    )
-
-    data class MethodPredicate(
-        val predicate: Predicate,
-        val negated: Boolean,
-    )
-
-    data class EdgeCondition(
-        val readMetaVar: Map<MetavarAtom, List<MethodPredicate>>,
-        val other: List<MethodPredicate>
-    )
-
-    data class EdgeEffect(
-        val assignMetaVar: Map<MetavarAtom, List<MethodPredicate>>
-    )
-
-    sealed interface Edge {
-        data class MethodCall(val condition: EdgeCondition, val effect: EdgeEffect) : Edge
-        data class MethodEnter(val condition: EdgeCondition, val effect: EdgeEffect) : Edge
-        data object AnalysisEnd : Edge
-    }
-
-    fun stateId(state: State): Int = nodeIndex[state.node] ?: error("Missing node")
-}
-
-data class TaintRuleEdge(
-    val stateFrom: State,
-    val stateTo: State,
-    val edge: Edge,
-    val checkGlobalState: Boolean,
-)
-
-sealed interface MetaVarConstraintOrPlaceHolder {
-    data class Constraint(val constraint: MetaVarConstraints) : MetaVarConstraintOrPlaceHolder
-    data class PlaceHolder(val constraint: MetaVarConstraints?) : MetaVarConstraintOrPlaceHolder
-}
-
-data class TaintRuleGenerationMetaVarInfo(
-    val constraints: Map<String, MetaVarConstraintOrPlaceHolder>
-)
-
-open class TaintRuleGenerationCtx(
-    val uniqueRuleId: String,
-    val automata: TaintRegisterStateAutomata,
-    val metaVarInfo: TaintRuleGenerationMetaVarInfo,
-    val globalStateAssignStates: Set<State>,
-    val edges: List<TaintRuleEdge>,
-    val edgesToFinalAccept: List<TaintRuleEdge>,
-    val edgesToFinalDead: List<TaintRuleEdge>,
-) {
-    private fun allStates(): List<State> {
-        val result = mutableListOf<State>()
-        edges.flatMapTo(result) { listOf(it.stateFrom, it.stateTo) }
-        edgesToFinalAccept.flatMapTo(result) { listOf(it.stateFrom, it.stateTo) }
-        edgesToFinalDead.flatMapTo(result) { listOf(it.stateFrom, it.stateTo) }
-        return result
-    }
-
-    private val metaVarValues by lazy {
-        val result = hashMapOf<MetavarAtom, MutableSet<Int>>()
-        allStates().forEach {
-            it.register.assignedVars.forEach { (mv, value) ->
-                result.getOrPut(mv, ::hashSetOf).add(value)
-            }
-        }
-        result
-    }
-
-    open fun allMarkValues(varName: MetavarAtom): List<String> {
-        val varValues = metaVarValues[varName] ?: error("MetaVar is not assigned")
-        return varValues.map { stateMarkName(varName, it) }
-    }
-
-    open fun stateMarkName(varName: MetavarAtom, varValue: Int): String =
-        "${uniqueRuleId}|${varName}|$varValue"
-
-    fun globalStateMarkName(state: State): String {
-        val stateId = automata.stateId(state)
-        return "${uniqueRuleId}__<STATE>__$stateId"
-    }
-
-    val stateVarPosition by lazy {
-        PositionBaseWithModifiers.BaseOnly(
-            PositionBase.ClassStatic("${uniqueRuleId}__<STATE>__")
-        )
+        true
     }
 }
 
@@ -774,8 +605,7 @@ private class SinkRuleGenerationCtx(
 ) : TaintRuleGenerationCtx(
     uniqueRuleId, automata, metaVarInfo,
     globalStateAssignStates, edges,
-    edgesToFinalAccept, edgesToFinalDead,
-
+    edgesToFinalAccept, edgesToFinalDead
 ) {
     constructor(
         initialStateVars: Set<MetavarAtom>, initialVarValue: Int, taintMarkName: String,
@@ -802,1396 +632,6 @@ private class SinkRuleGenerationCtx(
     }
 }
 
-private fun TaintRegisterStateAutomata.allStates(): Set<State> {
-    val states = hashSetOf<State>()
-    states += initial
-    states += finalAcceptStates
-    states += finalDeadStates
-    states += successors.keys
-    return states
-}
-
-private val automataCreationTimeout = 2.seconds
-
-private fun createAutomata(
-    formulaManager: MethodFormulaManager,
-    metaVarInfo: ResolvedMetaVarInfo,
-    initialNode: AutomataNode
-): List<TaintRegisterStateAutomata> {
-    val cancelation = OperationCancelation(automataCreationTimeout)
-
-    val result = TaintRegisterStateAutomataBuilder()
-
-    fun nodeId(node: AutomataNode): Int = result.nodeIndex.getOrPut(node) { result.nodeIndex.size }
-
-    val emptyRegister = StateRegister(emptyMap())
-    val startState = State(initialNode, emptyRegister)
-    val initialStates = mutableSetOf(startState)
-
-    val processedStates = hashSetOf<State>()
-    val unprocessed = mutableListOf<Pair<State, Pair<State, Edge>?>>(startState to null)
-
-    while (unprocessed.isNotEmpty()) {
-        val (state, prevEdge) = unprocessed.removeLast()
-        if (!processedStates.add(state)) continue
-
-        // force eval
-        nodeId(state.node)
-
-        if (state.node.accept) {
-            result.acceptStates.add(state)
-            // note: no need transitions from final state
-            continue
-        }
-
-        for ((edgeCondition, dstNode) in state.node.outEdges) {
-            for (simplifiedEdge in simplifyEdgeCondition(formulaManager, metaVarInfo, cancelation, edgeCondition)) {
-                val nextState = State(dstNode, emptyRegister)
-
-                if (simplifiedEdge.isEpsilonTransition()) {
-                    if (prevEdge != null) {
-                        val (prevState, edge) = prevEdge
-                        result.successors.getOrPut(prevState, ::hashSetOf).add(edge to nextState)
-                    } else {
-                        initialStates.add(nextState)
-                    }
-
-                    unprocessed.add(nextState to prevEdge)
-                } else {
-                    result.successors.getOrPut(state, ::hashSetOf).add(simplifiedEdge to nextState)
-                    unprocessed.add(nextState to (state to simplifiedEdge))
-                }
-            }
-        }
-    }
-
-    check(result.acceptStates.isNotEmpty()) { "Automata has no accept state" }
-
-    if (initialStates.size > 1) {
-        initialStates.removeAll { !acceptStateIsReachable(result, it) }
-    }
-
-    return initialStates.map {
-        result.build(formulaManager, it)
-    }
-}
-
-private fun acceptStateIsReachable(automata: TaintRegisterStateAutomataBuilder, initial: State): Boolean {
-    val visited = hashSetOf<State>()
-    val unprocessed = mutableListOf(initial)
-    while (unprocessed.isNotEmpty()) {
-        val state = unprocessed.removeLast()
-        if (state in automata.acceptStates) return true
-
-        if (!visited.add(state)) continue
-
-        unprocessed.addAll(automata.successors[state]?.map { it.second }.orEmpty())
-    }
-
-    return false
-}
-
-private fun Edge.isEpsilonTransition(): Boolean = when (this) {
-    Edge.AnalysisEnd -> false
-    is Edge.MethodCall -> condition.isTrue() && effect.hasNoEffect()
-    is Edge.MethodEnter -> condition.isTrue() && effect.hasNoEffect()
-}
-
-private fun EdgeCondition.isTrue(): Boolean = readMetaVar.isEmpty() && other.isEmpty()
-
-private fun EdgeEffect.hasNoEffect(): Boolean = assignMetaVar.isEmpty()
-
-data class SimulationState(
-    val original: State,
-    val state: State,
-    val originalPath: PersistentMap<State, State>
-)
-
-private class LoopAssignVarsException : RuntimeException("Loop assign vars")
-
-private fun simulateAutomata(automata: TaintRegisterStateAutomata): TaintRegisterStateAutomata {
-    val initialSimulationState = SimulationState(
-        automata.initial, automata.initial,
-        persistentHashMapOf(automata.initial to automata.initial)
-    )
-    val unprocessed = mutableListOf(initialSimulationState)
-
-    val finalAcceptStates = hashSetOf<State>()
-    val finalDeadStates = hashSetOf<State>()
-    val successors = hashMapOf<State, MutableSet<Pair<Edge, State>>>()
-
-    while (unprocessed.isNotEmpty()) {
-        val simulationState = unprocessed.removeLast()
-        val state = simulationState.state
-
-        if (simulationState.original in automata.finalAcceptStates) {
-            finalAcceptStates.add(state)
-            continue
-        }
-
-        if (simulationState.original in automata.finalDeadStates) {
-            finalDeadStates.add(state)
-            continue
-        }
-
-        for ((simplifiedEdge, dstState) in automata.successors[simulationState.original].orEmpty()) {
-            val loopStartState = simulationState.originalPath[dstState]
-            if (loopStartState != null) {
-                if (loopStartState.register == state.register) {
-                    // loop has no assignments
-                    continue
-                }
-
-                throw LoopAssignVarsException()
-            }
-
-            val dstStateId = automata.stateId(dstState)
-            val updatedEdge = rewriteEdgeWrtComplexMetavars(simplifiedEdge, state.register)
-            val dstStateRegister = simulateCondition(updatedEdge, dstStateId, state.register)
-
-            val nextState = dstState.copy(register = dstStateRegister)
-            successors.getOrPut(state, ::hashSetOf).add(updatedEdge to nextState)
-
-            val nextPath = simulationState.originalPath.put(dstState, nextState)
-            val nextSimulationState = SimulationState(dstState, nextState, nextPath)
-            unprocessed.add(nextSimulationState)
-        }
-    }
-
-    return TaintRegisterStateAutomata(
-        automata.formulaManager, automata.initial,
-        finalAcceptStates, finalDeadStates,
-        successors, automata.nodeIndex
-    )
-}
-
-private fun rewriteEdgeWrtComplexMetavars(edge: Edge, register: StateRegister): Edge {
-    return when (edge) {
-        Edge.AnalysisEnd -> edge
-        is Edge.MethodCall -> rewriteEdgeWrtComplexMetavars(edge.effect, edge.condition, register) { effect, condition ->
-            Edge.MethodCall(condition, effect)
-        }
-        is Edge.MethodEnter -> rewriteEdgeWrtComplexMetavars(edge.effect, edge.condition, register) { effect, condition ->
-            Edge.MethodEnter(condition, effect)
-        }
-    }
-}
-
-private inline fun rewriteEdgeWrtComplexMetavars(
-    effect: EdgeEffect,
-    condition: EdgeCondition,
-    register: StateRegister,
-    rebuildEdge: (EdgeEffect, EdgeCondition) -> Edge
-): Edge {
-    val newReadMetavar = mutableMapOf<MetavarAtom, List<MethodPredicate>>()
-
-    condition.readMetaVar.forEach { (metavar, preds) ->
-        if (metavar.basics.size == 1 || register.assignedVars.containsKey(metavar)) {
-            // Nothing to do
-            newReadMetavar[metavar] = preds
-            return@forEach
-        }
-
-        val basics = metavar.basics
-
-        val inputMetavars = hashSetOf<MetavarAtom>()
-        register.assignedVars.keys.forEach inner@{ inputMetavar ->
-            val thisBasics = inputMetavar.basics
-            if (inputMetavar.basics.intersect(metavar.basics).isEmpty()) {
-                return@inner
-            }
-
-            if (!thisBasics.all { basics.contains(it) }) {
-                error("Metavar $inputMetavar from register overlaps with metavar $metavar from condition")
-            }
-
-            if (inputMetavars.any { it.basics.intersect(thisBasics).isNotEmpty() }) {
-                error("Register contains overlapping metavars")
-            }
-
-            inputMetavars.add(inputMetavar)
-        }
-
-        if (inputMetavars.isEmpty()) {
-            // TODO: is this needed?
-            newReadMetavar[metavar] = preds
-            return@forEach
-        }
-
-        if (inputMetavars.isNotEmpty() && inputMetavars.sumOf { it.basics.size } != basics.size) {
-            error("Can't create metavar $metavar from metavars in register")
-        }
-
-        inputMetavars.forEach { inputMetavar ->
-            newReadMetavar[inputMetavar] = preds.map { pred ->
-                pred.replaceMetavar {
-                    check(it == metavar) { "Unexpected metavar" }
-                    inputMetavar
-                }
-            }
-        }
-    }
-
-    val newCondition = EdgeCondition(newReadMetavar, condition.other)
-    return rebuildEdge(effect, newCondition)
-}
-
-private fun MethodPredicate.replaceMetavar(replace: (MetavarAtom) -> MetavarAtom): MethodPredicate {
-    val constraint = predicate.constraint ?: return this
-    val newConstraint = constraint.replaceMetavar(replace)
-
-    return MethodPredicate(
-        predicate = Predicate(
-            signature = predicate.signature,
-            constraint = newConstraint
-        ),
-        negated = negated
-    )
-}
-
-private fun MethodConstraint.replaceMetavar(replace: (MetavarAtom) -> MetavarAtom): MethodConstraint {
-    if (this !is ParamConstraint) {
-        return this
-    }
-
-    val newCondition = when (condition) {
-        is IsMetavar -> IsMetavar(replace(condition.metavar))
-        is StringValueMetaVar -> StringValueMetaVar(replace(condition.metaVar))
-        else -> return this
-    }
-
-    return ParamConstraint(position, newCondition)
-}
-
-private fun automataPredecessors(automata: TaintRegisterStateAutomata): Map<State, Set<Pair<Edge, State>>> {
-    val predecessors = hashMapOf<State, MutableSet<Pair<Edge, State>>>()
-    for ((state, edges) in automata.successors) {
-        for ((edge, edgeDst) in edges) {
-            predecessors.getOrPut(edgeDst, ::hashSetOf).add(edge to state)
-        }
-    }
-    return predecessors
-}
-
-private fun removeUnreachabeStates(
-    automata: TaintRegisterStateAutomata
-): TaintRegisterStateAutomata {
-    val predecessors = automataPredecessors(automata)
-
-    val reachableStates = hashSetOf<State>()
-    val unprocessed = automata.finalAcceptStates.toMutableList()
-    unprocessed += automata.finalDeadStates
-
-    while (unprocessed.isNotEmpty()) {
-        val stateId = unprocessed.removeLast()
-        if (!reachableStates.add(stateId)) continue
-
-        val predStates = predecessors[stateId] ?: continue
-        for ((_, predState) in predStates) {
-            unprocessed.add(predState)
-        }
-    }
-
-    check(automata.initial in reachableStates) {
-        "Initial state is unreachable"
-    }
-
-    var cleanerStateReachable = false
-    val cleanerState = State(AutomataNode(), StateRegister(emptyMap()))
-    val reachableSuccessors = hashMapOf<State, MutableSet<Pair<Edge, State>>>()
-
-    unprocessed.add(automata.initial)
-    while (unprocessed.isNotEmpty()) {
-        val state = unprocessed.removeLast()
-        if (reachableSuccessors.containsKey(state)) continue
-
-        if (state !in reachableStates) continue
-
-        val newSuccessors = hashSetOf<Pair<Edge, State>>()
-        for ((edge, successor) in automata.successors[state].orEmpty()) {
-            if (successor in reachableStates) {
-                newSuccessors.add(edge to successor)
-                unprocessed.add(successor)
-                continue
-            }
-
-            cleanerStateReachable = true
-            newSuccessors.add(edge to cleanerState)
-        }
-        reachableSuccessors[state] = newSuccessors
-    }
-
-    if (!cleanerStateReachable) {
-        return TaintRegisterStateAutomata(
-            automata.formulaManager, automata.initial,
-            automata.finalAcceptStates, automata.finalDeadStates,
-            reachableSuccessors, automata.nodeIndex
-        )
-    }
-
-    val nodeIndex = automata.nodeIndex.toMutableMap()
-    nodeIndex[cleanerState.node] = nodeIndex.size
-
-    val finalDeadNodes = automata.finalDeadStates + cleanerState
-    return TaintRegisterStateAutomata(
-        automata.formulaManager, automata.initial,
-        automata.finalAcceptStates, finalDeadNodes,
-        reachableSuccessors, nodeIndex
-    )
-}
-
-private fun eliminateDeadVariables(
-    automata: TaintRegisterStateAutomata,
-    acceptStateLiveVars: Set<MetavarAtom>
-): TaintRegisterStateAutomata {
-    // TODO: to we need to specially handle complex variables here?
-    val predecessors = automataPredecessors(automata)
-
-    val variableIdx = hashMapOf<MetavarAtom, Int>()
-    val stateLiveVars = IdentityHashMap<State, PersistentBitSet>()
-
-    val unprocessed = mutableListOf<Pair<State, PersistentBitSet>>()
-
-    for (state in automata.finalDeadStates) {
-        unprocessed.add(state to emptyPersistentBitSet())
-    }
-
-    for (state in automata.finalAcceptStates) {
-        val liveVarIndices = acceptStateLiveVars.toBitSet {
-            variableIdx.getOrPut(it) { variableIdx.size }
-        }
-        val liveVarSet = emptyPersistentBitSet().persistentAddAll(liveVarIndices)
-        unprocessed.add(state to liveVarSet)
-    }
-
-    while (unprocessed.isNotEmpty()) {
-        val (state, newLiveVars) = unprocessed.removeLast()
-
-        val currentLiveVars = stateLiveVars[state]
-        if (currentLiveVars == newLiveVars) continue
-
-        val liveVars = currentLiveVars?.persistentAddAll(newLiveVars) ?: newLiveVars
-        stateLiveVars[state] = liveVars
-
-        for ((edge, predState) in predecessors[state].orEmpty()) {
-            val readVariables = when (edge) {
-                Edge.AnalysisEnd -> emptySet()
-                is Edge.MethodCall -> edge.condition.readMetaVar.keys
-                is Edge.MethodEnter -> edge.condition.readMetaVar.keys
-            }
-
-            val readVariableSet = readVariables.toBitSet {
-                variableIdx.getOrPut(it) { variableIdx.size }
-            }
-            val dstLiveVars = liveVars.persistentAddAll(readVariableSet)
-            unprocessed.add(predState to dstLiveVars)
-        }
-    }
-
-    val stateMapping = hashMapOf<State, State>()
-    for (state in automata.allStates()) {
-        val liveVars = stateLiveVars[state] ?: continue
-        val liveRegisterValues = state.register.assignedVars.filterKeys {
-            val idx = variableIdx[it] ?: return@filterKeys false
-            idx in liveVars
-        }
-        if (liveRegisterValues == state.register.assignedVars) continue
-
-        val register = StateRegister(liveRegisterValues)
-        stateMapping[state] = state.copy(register = register)
-    }
-
-    if (stateMapping.isEmpty()) return automata
-
-    val successors = hashMapOf<State, MutableSet<Pair<Edge, State>>>()
-    for ((state, stateSuccessors) in automata.successors) {
-        val mappedSuccessors = stateSuccessors.mapTo(hashSetOf()) { (edge, s) ->
-            edge to (stateMapping[s] ?: s)
-        }
-        val mappedState = stateMapping[state] ?: state
-        successors[mappedState] = mappedSuccessors
-    }
-
-    return TaintRegisterStateAutomata(
-        automata.formulaManager,
-        initial = stateMapping[automata.initial] ?: automata.initial,
-        finalAcceptStates = automata.finalAcceptStates.mapTo(hashSetOf()) { stateMapping[it] ?: it },
-        finalDeadStates = automata.finalDeadStates.mapTo(hashSetOf()) { stateMapping[it] ?: it },
-        successors = successors,
-        nodeIndex = automata.nodeIndex
-    )
-}
-
-private fun cleanupAutomata(automata: TaintRegisterStateAutomata, metaVarInfo: ResolvedMetaVarInfo): TaintRegisterStateAutomata {
-    val result = tryRemoveEndEdge(automata)
-    return tryRemoveDummyMethodEntry(result, metaVarInfo)
-}
-
-private fun tryRemoveEndEdge(automata: TaintRegisterStateAutomata): TaintRegisterStateAutomata {
-    val predecessors = automataPredecessors(automata)
-    val finalAcceptReplacement = mutableListOf<Pair<State, State>>()
-    val finalDeadReplacement = mutableListOf<Pair<State, State>>()
-
-    for (finalState in automata.finalAcceptStates) {
-        val preFinalEdges = predecessors[finalState] ?: continue
-        if (preFinalEdges.size != 1) continue
-
-        val (edge, predecessor) = preFinalEdges.single()
-        if (edge !is Edge.AnalysisEnd) continue
-
-        if (automata.successors[predecessor].orEmpty().size != 1) continue
-
-        finalAcceptReplacement.add(finalState to predecessor)
-    }
-
-    for (finalState in automata.finalDeadStates) {
-        val preFinalEdges = predecessors[finalState] ?: continue
-        if (preFinalEdges.size != 1) continue
-
-        val (edge, predecessor) = preFinalEdges.single()
-        if (edge !is Edge.AnalysisEnd) continue
-
-        if (automata.successors[predecessor].orEmpty().size != 1) continue
-
-        finalDeadReplacement.add(finalState to predecessor)
-    }
-
-    if (finalAcceptReplacement.isEmpty() && finalDeadReplacement.isEmpty()) return automata
-
-    val successors = automata.successors.toMutableMap()
-    val finalAccept = automata.finalAcceptStates.toHashSet()
-    val finalDead = automata.finalDeadStates.toHashSet()
-
-    for ((oldState, newState) in finalAcceptReplacement) {
-        successors.remove(oldState)
-        successors[newState] = emptySet()
-
-        finalAccept.remove(oldState)
-        finalAccept.add(newState)
-    }
-
-    for ((oldState, newState) in finalDeadReplacement) {
-        successors.remove(oldState)
-        successors[newState] = emptySet()
-
-        finalDead.remove(oldState)
-        finalDead.add(newState)
-    }
-
-    return TaintRegisterStateAutomata(
-        automata.formulaManager,
-        automata.initial,
-        finalAccept, finalDead, successors,
-        automata.nodeIndex
-    )
-}
-
-private fun tryRemoveDummyMethodEntry(
-    automata: TaintRegisterStateAutomata,
-    metaVarInfo: ResolvedMetaVarInfo,
-): TaintRegisterStateAutomata {
-    val initialSuccessors = automata.successors[automata.initial].orEmpty()
-    val dummyMethodEnters = mutableListOf<Pair<Edge.MethodEnter, State>>()
-    for ((edge, state) in initialSuccessors) {
-        if (edge !is Edge.MethodEnter) continue
-        if (edge.effect.assignMetaVar.isNotEmpty()) continue
-        if (!edge.condition.isDummyCondition(metaVarInfo)) continue
-
-        dummyMethodEnters.add(edge to state)
-    }
-
-    if (dummyMethodEnters.isEmpty()) return automata
-
-    val mutableSuccessors = hashMapOf<State, MutableSet<Pair<Edge, State>>>()
-    automata.successors.forEach { (s, edges) -> mutableSuccessors[s] = edges.toMutableSet() }
-
-    val initialSucc = mutableSuccessors[automata.initial]!!
-
-    for ((edge, state) in dummyMethodEnters) {
-        val nextEdges = mutableSuccessors[state]
-        initialSucc.remove(edge to state)
-        nextEdges?.forEach { (e, s) ->
-            initialSucc.add(e to s)
-        }
-
-        // todo: may be incorrect
-        mutableSuccessors.remove(state)
-    }
-
-    return TaintRegisterStateAutomata(
-        automata.formulaManager, automata.initial,
-        automata.finalAcceptStates, automata.finalDeadStates,
-        mutableSuccessors, automata.nodeIndex
-    )
-}
-
-private fun EdgeCondition.isDummyCondition(metaVarInfo: ResolvedMetaVarInfo): Boolean {
-    for (cond in other) {
-        if (cond.predicate.constraint != null) return false
-        val sig = cond.predicate.signature
-
-        when (val mn = sig.methodName.name) {
-            is SignatureName.Concrete -> return false
-            SignatureName.AnyName -> {}
-            is SignatureName.MetaVar -> {
-                if (metaVarInfo.metaVarConstraints[mn.metaVar] != null) {
-                    return false
-                }
-            }
-        }
-
-        when (val cn = sig.enclosingClassName.name) {
-            TypeNamePattern.AnyType -> {}
-            is TypeNamePattern.MetaVar -> {
-                if (metaVarInfo.metaVarConstraints[cn.metaVar] != null) {
-                    return false
-                }
-            }
-            is TypeNamePattern.ClassName,
-            is TypeNamePattern.FullyQualified,
-            is TypeNamePattern.PrimitiveName -> return false
-        }
-    }
-
-    return true
-}
-
-private fun cleanupAutomata(automata: TaintRuleGenerationCtx): TaintRuleGenerationCtx {
-    val result = tryRemoveEndEdge(automata)
-    return dropUnassignedMarkChecks(result)
-}
-
-private fun tryRemoveEndEdge(automata: TaintRuleGenerationCtx): TaintRuleGenerationCtx {
-    if (automata.edgesToFinalDead.isNotEmpty()) return automata
-    if (automata.edgesToFinalAccept.size > 1) return automata
-
-    val finalEdge = automata.edgesToFinalAccept.singleOrNull() ?: return automata
-
-    if (finalEdge.edge !is Edge.AnalysisEnd) return automata
-
-    val preFinalEdges = automata.edges.filter { it.stateTo == finalEdge.stateFrom }
-    if (preFinalEdges.isEmpty()) return automata
-
-    return TaintRuleGenerationCtx(
-        automata.uniqueRuleId, automata.automata, automata.metaVarInfo,
-        automata.globalStateAssignStates.minus(finalEdge.stateFrom),
-        automata.edges.minus(preFinalEdges.toSet()),
-        edgesToFinalAccept = preFinalEdges,
-        automata.edgesToFinalDead
-    )
-}
-
-private fun dropUnassignedMarkChecks(automata: TaintRuleGenerationCtx): TaintRuleGenerationCtx {
-    val edges = automata.edges.map { it.copy(edge = it.edge.dropUnassignedMarkChecks(it.stateFrom)) }
-    val edgesToFinalAccept = automata.edgesToFinalAccept.map { it.copy(edge = it.edge.dropUnassignedMarkChecks(it.stateFrom)) }
-    val edgesToFinalDead = automata.edgesToFinalDead.map { it.copy(edge = it.edge.dropUnassignedMarkChecks(it.stateFrom)) }
-    return TaintRuleGenerationCtx(
-        automata.uniqueRuleId, automata.automata, automata.metaVarInfo, automata.globalStateAssignStates,
-        edges, edgesToFinalAccept, edgesToFinalDead
-    )
-}
-
-private fun Edge.dropUnassignedMarkChecks(state: State): Edge = when (this) {
-    Edge.AnalysisEnd -> this
-    is Edge.MethodCall -> copy(condition = condition.dropUnassignedMarkChecks(state))
-    is Edge.MethodEnter -> copy(condition = condition.dropUnassignedMarkChecks(state))
-}
-
-private fun EdgeCondition.dropUnassignedMarkChecks(state: State): EdgeCondition {
-    val readMetaVar = readMetaVar.filterKeys { it in state.register.assignedVars }
-    return EdgeCondition(readMetaVar, other)
-}
-
-private data class ValueGeneratorCtx(
-    val valueConstraint: Map<MetavarAtom, List<ParamCondition.Atom>>
-) {
-    companion object {
-        val EMPTY: ValueGeneratorCtx = ValueGeneratorCtx(emptyMap())
-    }
-}
-
-private fun <CtxT> eliminateEdges(automata: TaintRegisterStateAutomata, edgeEliminator: EdgeEliminator<CtxT>, initialCtx: CtxT): TaintRegisterStateAutomata {
-    val successors = hashMapOf<State, MutableSet<Pair<Edge, State>>>()
-    val finalAcceptStates = automata.finalAcceptStates.toHashSet()
-    val finalDeadStates = automata.finalDeadStates.toHashSet()
-    val removedStates = hashSetOf<State>()
-
-    val unprocessed = mutableListOf(automata.initial to initialCtx)
-    val visited = hashSetOf<Pair<State, CtxT>>()
-    while (unprocessed.isNotEmpty()) {
-        val state = unprocessed.removeLast()
-        if (!visited.add(state)) continue
-
-        val stateSuccessors = successors.getOrPut(state.first, ::hashSetOf)
-        eliminateEdgesForOneState(
-            state.first, state.second, automata.successors,
-            finalAcceptStates, finalDeadStates,
-            removedStates,
-            stateSuccessors, unprocessed, edgeEliminator
-        )
-    }
-
-    finalAcceptStates.removeAll(removedStates)
-    finalDeadStates.removeAll(removedStates)
-    removedStates.forEach { successors.remove(it) }
-    finalAcceptStates.forEach { successors.remove(it) }
-    finalDeadStates.forEach { successors.remove(it) }
-
-    return TaintRegisterStateAutomata(
-        automata.formulaManager, automata.initial,
-        finalAcceptStates, finalDeadStates,
-        successors, automata.nodeIndex
-    )
-}
-
-private fun <CtxT> eliminateEdgesForOneState(
-    state: State,
-    ctx: CtxT,
-    successors: Map<State, Set<Pair<Edge, State>>>,
-    finalAcceptStates: MutableSet<State>,
-    finalDeadStates: MutableSet<State>,
-    removedStates: MutableSet<State>,
-    resultStateSuccessors: MutableSet<Pair<Edge, State>>,
-    unprocessed: MutableList<Pair<State, CtxT>>,
-    edgeEliminator: EdgeEliminator<CtxT>
-) {
-    for ((edge, nextState) in successors[state].orEmpty()) {
-        val elimResult = edgeEliminator.eliminateEdge(edge, ctx)
-        when (elimResult) {
-            EdgeEliminationResult.Unchanged -> {
-                resultStateSuccessors.add(edge to nextState)
-                unprocessed.add(nextState to ctx)
-                continue
-            }
-
-            is EdgeEliminationResult.Replace -> {
-                resultStateSuccessors.add(elimResult.newEdge to nextState)
-                unprocessed.add(nextState to elimResult.ctx)
-                continue
-            }
-
-            is EdgeEliminationResult.Eliminate -> {
-                if (nextState in finalAcceptStates) {
-                    val nextSuccessors = successors[nextState].orEmpty()
-                    check(nextSuccessors.isEmpty())
-
-                    removedStates.add(nextState)
-                    finalAcceptStates.add(state)
-                }
-
-                if (nextState in finalDeadStates) {
-                    val nextSuccessors = successors[nextState].orEmpty()
-                    check(nextSuccessors.isEmpty())
-
-                    removedStates.add(nextState)
-                    finalDeadStates.add(state)
-                }
-
-                if (nextState == state) continue
-
-                eliminateEdgesForOneState(
-                    nextState, elimResult.ctx, successors, finalAcceptStates, finalDeadStates, removedStates,
-                    resultStateSuccessors, unprocessed, edgeEliminator
-                )
-            }
-        }
-    }
-}
-
-private fun interface EdgeEliminator<CtxT> {
-    fun eliminateEdge(edge: Edge, ctx: CtxT): EdgeEliminationResult<CtxT>
-}
-
-private sealed interface EdgeEliminationResult<out CtxT> {
-    data object Unchanged : EdgeEliminationResult<Nothing>
-    data class Replace<CtxT>(val newEdge: Edge, val ctx: CtxT) : EdgeEliminationResult<CtxT>
-    data class Eliminate<CtxT>(val ctx: CtxT) : EdgeEliminationResult<CtxT>
-}
-
-private fun <CtxT> edgeTypePreservingEdgeEliminator(
-    eliminateEdge: (EdgeEffect, EdgeCondition, CtxT, (EdgeEffect, EdgeCondition) -> Edge) -> EdgeEliminationResult<CtxT>
-): EdgeEliminator<CtxT> = EdgeEliminator { edge, ctx ->
-    when (edge) {
-        Edge.AnalysisEnd -> EdgeEliminationResult.Unchanged
-        is Edge.MethodCall -> eliminateEdge(edge.effect, edge.condition, ctx) { effect, cond ->
-            Edge.MethodCall(cond, effect)
-        }
-
-        is Edge.MethodEnter -> eliminateEdge(edge.effect, edge.condition, ctx) { effect, cond ->
-            Edge.MethodEnter(cond, effect)
-        }
-    }
-}
-
-private fun eliminateAnyValueGenerator(
-    effect: EdgeEffect,
-    condition: EdgeCondition,
-    ctx: ValueGeneratorCtx,
-    rebuildEdge: (EdgeEffect, EdgeCondition) -> Edge,
-): EdgeEliminationResult<ValueGeneratorCtx> {
-    if (effect.anyValueGeneratorUsed()) {
-        val metaVar = effect.assignMetaVar.keys.singleOrNull()
-            ?: error("Value gen with multiple mata vars")
-
-        val metaVarPred = effect.assignMetaVar.getValue(metaVar).first()
-        check((metaVarPred.predicate.constraint as ParamConstraint).position is Position.Result) {
-            "Unexpected constraint: $metaVarPred"
-        }
-
-        check(condition.readMetaVar.keys.all { it == metaVar }) {
-            "Unexpected condition: $condition"
-        }
-
-        val metaVarConstraints = mutableListOf<ParamCondition.Atom>()
-        for (constraint in condition.other) {
-            when (val c = constraint.predicate.constraint) {
-                is NumberOfArgsConstraint -> continue
-
-                is ParamConstraint -> {
-                    if (c.position !is Position.Result) {
-                        error("Unexpected constraint: $c")
-                    }
-
-                    if (c.condition is IsMetavar) {
-                        error("Unexpected condition: $c")
-                    }
-
-                    metaVarConstraints.add(c.condition)
-                }
-
-                null -> TODO("any value generator without constraints")
-                is ClassModifierConstraint,
-                is MethodModifierConstraint -> error("Unexpected any value generator constraint")
-            }
-        }
-
-        val nextCtx = ValueGeneratorCtx(ctx.valueConstraint + (metaVar to metaVarConstraints))
-        return EdgeEliminationResult.Eliminate(nextCtx)
-    }
-
-    val valueGenEffect = hashMapOf<MetavarAtom, MutableList<MethodPredicate>>()
-    for ((metaVar, preds) in effect.assignMetaVar) {
-        for (pred in preds) {
-            if (pred.anyValueGeneratorUsed()) {
-                valueGenEffect.getOrPut(metaVar, ::mutableListOf).add(pred)
-            }
-        }
-    }
-
-    var resultCondition = condition
-    val resultConstraint = ctx.valueConstraint.toMutableMap()
-    val constraintIter = resultConstraint.iterator()
-    while (constraintIter.hasNext()) {
-        val (metaVar, constraint) = constraintIter.next()
-
-        val metaVarEffect = effect.assignMetaVar[metaVar] ?: continue
-
-        val readMetaVar = resultCondition.readMetaVar - metaVar
-        val other = resultCondition.other.toMutableList()
-
-        for (mp in metaVarEffect) {
-            val paramConstraint = mp.predicate.constraint as? ParamConstraint ?: continue
-            check(paramConstraint.condition is IsMetavar && paramConstraint.condition.metavar == metaVar)
-            for (atom in constraint) {
-                val newParamConstraint = paramConstraint.copy(condition = atom)
-                val newPredicate = mp.predicate.copy(constraint = newParamConstraint)
-                other += MethodPredicate(newPredicate, negated = false)
-            }
-        }
-
-        resultCondition = EdgeCondition(readMetaVar, other)
-        constraintIter.remove()
-    }
-
-    if (resultCondition === condition) return EdgeEliminationResult.Unchanged
-
-    val newEdge = rebuildEdge(effect, resultCondition)
-    return EdgeEliminationResult.Replace(newEdge, ValueGeneratorCtx(resultConstraint))
-}
-
-private fun EdgeEffect.anyValueGeneratorUsed(): Boolean =
-    assignMetaVar.values.any { preds -> preds.any { it.anyValueGeneratorUsed() } }
-
-private fun MethodPredicate.anyValueGeneratorUsed(): Boolean =
-    predicate.signature.isGeneratedAnyValueGenerator()
-
-private fun MethodSignature.isGeneratedAnyValueGenerator(): Boolean {
-    val name = methodName.name
-    if (name !is SignatureName.Concrete) return false
-    return name.name == generatedAnyValueGeneratorMethodName
-}
-
-private data class StringConcatCtx(
-    val metavarMapping: Map<MetavarAtom, Set<MetavarAtom>>
-) {
-    fun transform(condition: EdgeCondition): EdgeCondition {
-        val transformedOther = mutableSetOf<MethodPredicate>()
-        val transformedReadMetaVar = transform(condition.readMetaVar, ignoreNegatedPreds = false, transformedOther)
-        condition.other.forEach { transformedOther.addAll(transform(it)) }
-        return EdgeCondition(transformedReadMetaVar, transformedOther.toList())
-    }
-
-    fun transform(effect: EdgeEffect): EdgeEffect {
-        val transformedAssign = transform(effect.assignMetaVar, ignoreNegatedPreds = true, newOther = hashSetOf())
-        return EdgeEffect(transformedAssign)
-    }
-
-    private fun transform(
-        preds: Map<MetavarAtom, List<MethodPredicate>>,
-        ignoreNegatedPreds: Boolean,
-        newOther: MutableSet<MethodPredicate>,
-    ): Map<MetavarAtom, List<MethodPredicate>> {
-        val result = hashMapOf<MetavarAtom, MutableList<MethodPredicate>>()
-        preds.forEach { (prevMetavar, prevPreds) ->
-            val newMetavars = metavarMapping.getOrElse(prevMetavar) { setOf(prevMetavar) }
-
-            newMetavars.forEach { newMetavar ->
-                // Need to concretize context for `prevMetavar`
-                val newCtx = StringConcatCtx(metavarMapping + (prevMetavar to setOf(newMetavar)))
-                val newPreds = prevPreds.flatMap(newCtx::transform)
-
-                val newMetaVarPreds = result.getOrPut(newMetavar, ::mutableListOf)
-                for (p in newPreds) {
-                    if (p.negated && ignoreNegatedPreds) continue
-
-                    val metaVar = p.findMetaVarConstraint()
-                    if (metaVar != null) {
-                        check(metaVar == newMetavar) { "Error: unexpected meta var: $metaVar" }
-                        newMetaVarPreds.add(p)
-                    } else {
-                        newOther.add(p)
-                    }
-                }
-            }
-        }
-        return result
-    }
-
-    private fun transform(predicate: MethodPredicate): List<MethodPredicate> {
-        return transform(predicate.predicate).map { newPredicate ->
-            MethodPredicate(newPredicate, predicate.negated)
-        }
-    }
-
-    private fun transform(predicate: Predicate): List<Predicate> {
-        if (predicate.signature.isGeneratedStringConcat()) {
-            // Replacing with String.concat()
-            val newConstraints = predicate.constraint?.let { constraint ->
-                transform(constraint) {
-                    if (it is Position.Argument) {
-                        val index = it.index
-                        check(index is Position.ArgumentIndex.Concrete) { "Expected concrete argument index" }
-                        check(index.idx in 0 until 2) { "Invalid index for string concat" }
-                        if (index.idx == 0) {
-                            Position.Object
-                        } else {
-                            Position.Argument(
-                                Position.ArgumentIndex.Concrete(0)
-                            )
-                        }
-                    } else {
-                        it
-                    }
-                }
-            }
-
-            return (newConstraints ?: listOf(null)).map { newConstraint ->
-                Predicate(stringConcatMethodSignature, newConstraint)
-            }
-        }
-
-        val newConstraints = predicate.constraint?.let { constraint ->
-            transform(constraint) { it }
-        }
-        return (newConstraints ?: listOf(null)).map { newConstraint ->
-            Predicate(predicate.signature, newConstraint)
-        }
-    }
-
-    private fun transform(
-        constraint: MethodConstraint,
-        positionTransform: (Position) -> Position
-    ): List<MethodConstraint> {
-        if (constraint !is ParamConstraint) {
-            return listOf(constraint)
-        }
-
-        val newPosition = positionTransform(constraint.position)
-        val newConditions = transform(constraint.condition)
-
-        return newConditions.map { newCondition ->
-            ParamConstraint(newPosition, newCondition)
-        }
-    }
-
-    private fun transform(condition: ParamCondition.Atom): List<ParamCondition.Atom> {
-        return when (condition) {
-            is IsMetavar -> {
-                val newMetavars = metavarMapping[condition.metavar] ?: return listOf(condition)
-                val modified = newMetavars.map(::IsMetavar)
-
-                if (condition.metavar !in newMetavars || newMetavars.size > 1) {
-                    return modified + ParamCondition.TypeIs(TypeNamePattern.FullyQualified("java.lang.String"))
-                } else {
-                    return modified
-                }
-            }
-
-            is StringValueMetaVar -> {
-                val newMetavars = metavarMapping[condition.metaVar] ?: return listOf(condition)
-                return newMetavars.map(::StringValueMetaVar)
-            }
-
-            else -> listOf(condition)
-        }
-    }
-
-    companion object {
-        val EMPTY: StringConcatCtx = StringConcatCtx(emptyMap())
-
-        val stringConcatMethodSignature by lazy {
-            MethodSignature(
-                MethodName(SignatureName.Concrete("concat")),
-                MethodEnclosingClassName(TypeNamePattern.FullyQualified("java.lang.String"))
-            )
-        }
-    }
-}
-
-private fun eliminateStringConcat(
-    effect: EdgeEffect,
-    condition: EdgeCondition,
-    ctx: StringConcatCtx,
-    rebuildEdge: (EdgeEffect, EdgeCondition) -> Edge,
-): EdgeEliminationResult<StringConcatCtx> {
-    // TODO: rollback renaming of metavar when necessary (?)
-    val generatedByConcatHelperMetavars = effect.assignMetaVar.mapNotNull { (metavar, preds) ->
-        val isResultOfConcatHelper = preds.any {
-            val predCondition = it.asConditionOnStringConcat<Position.Result>()
-                ?: return@any false
-
-            check(predCondition == IsMetavar(metavar)) { "Unexpected condition" }
-            !it.negated
-        }
-
-        metavar.takeIf { isResultOfConcatHelper }
-    }.toSet()
-
-    if (generatedByConcatHelperMetavars.isEmpty()) {
-        return ctx.transformEdge(effect, condition, rebuildEdge)
-    }
-
-    val metavarArguments = condition.readMetaVar.flatMap { (metavar, preds) ->
-        val isArgumentOfConcatHelper = preds.any {
-            val predCondition = it.asConditionOnStringConcat<Position.Argument>()
-                ?: return@any false
-
-            check(predCondition == IsMetavar(metavar)) { "Unexpected condition" }
-            !it.negated
-        }
-
-        if (isArgumentOfConcatHelper) {
-            ctx.metavarMapping.getOrElse(metavar) { setOf(metavar) }
-        } else {
-            emptyList()
-        }
-    }.toSet()
-
-    val otherArguments = condition.other.mapNotNull {
-        it.asConditionOnStringConcat<Position.Argument>()
-    }
-
-    if (otherArguments.isEmpty() || otherArguments.singleOrNull() == ParamCondition.AnyStringLiteral) {
-        val newCtx = if (metavarArguments.size == 1 && metavarArguments == generatedByConcatHelperMetavars) {
-            ctx
-        } else {
-            StringConcatCtx(
-                metavarMapping = ctx.metavarMapping + generatedByConcatHelperMetavars.associateWith { metavarArguments }
-            )
-        }
-        return EdgeEliminationResult.Eliminate(newCtx)
-    }
-    return ctx.transformEdge(effect, condition, rebuildEdge)
-}
-
-private fun StringConcatCtx.transformEdge(
-    effect: EdgeEffect,
-    condition: EdgeCondition,
-    rebuildEdge: (EdgeEffect, EdgeCondition) -> Edge
-): EdgeEliminationResult<StringConcatCtx> {
-    val newEffect = transform(effect)
-    val newCondition = transform(condition)
-
-    return if (effect == newEffect && condition == newCondition) {
-        EdgeEliminationResult.Unchanged
-    } else {
-        val newEdge = rebuildEdge(newEffect, newCondition)
-        EdgeEliminationResult.Replace(newEdge, this)
-    }
-}
-
-private inline fun <reified T : Position> MethodPredicate.asConditionOnStringConcat(): ParamCondition.Atom? {
-    if (!predicate.signature.isGeneratedStringConcat()) {
-        return null
-    }
-
-    val constraint = predicate.constraint as? ParamConstraint ?: return null
-
-    if (constraint.position !is T) {
-        return null
-    }
-
-    return constraint.condition
-}
-
-private fun MethodSignature.isGeneratedStringConcat(): Boolean {
-    val name = methodName.name
-    if (name !is SignatureName.Concrete) return false
-    return name.name == generatedStringConcatMethodName
-}
-
-private fun RuleConversionCtx.generateTaintEdges(
-    automata: TaintRegisterStateAutomata,
-    metaVarInfo: ResolvedMetaVarInfo,
-    uniqueRuleId: String
-): TaintRuleGenerationCtx {
-    val globalStateAssignStates = hashSetOf<State>()
-    val taintRuleEdges = mutableListOf<TaintRuleEdge>()
-    val finalAcceptEdges = mutableListOf<TaintRuleEdge>()
-    val finalDeadEdges = mutableListOf<TaintRuleEdge>()
-
-    val predecessors = automataPredecessors(automata)
-
-    val outDegree: MutableMap<State, Int> = automata.successors.mapValues { it.value.size }.toMutableMap()
-
-    val unprocessed = ArrayDeque<State>()
-    unprocessed.addAll(automata.finalAcceptStates)
-    unprocessed.addAll(automata.finalDeadStates)
-
-    while (unprocessed.isNotEmpty()) {
-        val dstState = unprocessed.removeFirst()
-
-        val isFinal = dstState in automata.finalAcceptStates || dstState in automata.finalDeadStates
-
-        for ((edge, state) in predecessors[dstState].orEmpty()) {
-            outDegree.compute(state) { _, prevDeg ->
-                check(prevDeg != null && prevDeg > 0) { "Unexpected degree $prevDeg for state" }
-
-                (prevDeg - 1).also {
-                    if (it == 0) {
-                        check(state !in automata.finalAcceptStates && state !in automata.finalDeadStates) {
-                            "Unexpected final state as predecessor"
-                        }
-                        unprocessed.add(state)
-                    }
-                }
-            }
-
-            val stateId = automata.stateId(state)
-            val stateVars = state.register.assignedVars.filter { it.value == stateId }
-
-            val globalVarRequired = when {
-                state == automata.initial -> false
-                edge is Edge.AnalysisEnd -> true
-                stateVars.isEmpty() -> true
-                else -> {
-                    val writeVars = when (edge) {
-                        Edge.AnalysisEnd -> emptySet()
-                        is Edge.MethodCall -> edge.effect.assignMetaVar.keys
-                        is Edge.MethodEnter -> edge.effect.assignMetaVar.keys
-                    }
-                    stateVars.all { it.key !in writeVars }
-                }
-            }
-
-            if (isFinal) {
-                if (dstState in automata.finalAcceptStates || state.register.assignedVars.isNotEmpty()) {
-                    if (globalVarRequired) {
-                        globalStateAssignStates.add(state)
-                    }
-
-                    val taintEdge = edge.ensurePositiveCondition(this)
-                        ?: continue
-
-                    val edgeCollection = if (dstState in automata.finalAcceptStates) finalAcceptEdges else finalDeadEdges
-                    edgeCollection += TaintRuleEdge(state, dstState, taintEdge, globalVarRequired)
-                }
-
-                continue
-            }
-
-            val edgeRequired = state.register != dstState.register
-                    || (dstState in globalStateAssignStates && dstState != state && edge.canAssignStateVar())
-
-            if (!edgeRequired) continue
-
-            if (globalVarRequired) {
-                globalStateAssignStates.add(state)
-            }
-
-            val taintEdge = edge.ensurePositiveCondition(this)
-                ?: continue
-
-            taintRuleEdges += TaintRuleEdge(state, dstState, taintEdge, globalVarRequired)
-        }
-    }
-
-    check(outDegree.all { it.value == 0 }) { "Some states were not visited" }
-
-    val initialStateWithGlobalAssign = hashSetOf<State>()
-    for (state in globalStateAssignStates) {
-        if (taintRuleEdges.any { it.stateTo == state }) continue
-        if (finalAcceptEdges.any { it.stateTo == state }) continue
-        if (finalDeadEdges.any { it.stateTo == state }) continue
-
-        initialStateWithGlobalAssign.add(state)
-    }
-
-    if (initialStateWithGlobalAssign.isNotEmpty()) {
-        globalStateAssignStates.removeAll(initialStateWithGlobalAssign)
-
-        fun MutableList<TaintRuleEdge>.removeGlobalStateCheck() {
-            for ((i, edge) in this.withIndex()) {
-                if (edge.stateFrom in initialStateWithGlobalAssign) {
-                    this[i] = edge.copy(checkGlobalState = false)
-                }
-            }
-        }
-
-        taintRuleEdges.removeGlobalStateCheck()
-        finalAcceptEdges.removeGlobalStateCheck()
-        finalDeadEdges.removeGlobalStateCheck()
-    }
-
-    val metVarConstraints = hashMapOf<String, MetaVarConstraintOrPlaceHolder>()
-
-    val placeHolders = computePlaceHolders(taintRuleEdges, finalAcceptEdges, finalDeadEdges)
-    placeHolders.placeHolderRequiredMetaVars.forEach {
-        metVarConstraints[it] = MetaVarConstraintOrPlaceHolder.PlaceHolder(metaVarInfo.metaVarConstraints[it])
-    }
-
-    metaVarInfo.metaVarConstraints.forEach { (mv, c) ->
-        if (mv !in metVarConstraints) {
-            metVarConstraints[mv] = MetaVarConstraintOrPlaceHolder.Constraint(c)
-        }
-    }
-
-
-    return TaintRuleGenerationCtx(
-        uniqueRuleId, automata, TaintRuleGenerationMetaVarInfo(metVarConstraints),
-        globalStateAssignStates, taintRuleEdges, finalAcceptEdges, finalDeadEdges
-    )
-}
-
-private class MetaVarCtx {
-    val metaVarIdx = hashMapOf<String, Int>()
-    val metaVars = mutableListOf<String>()
-
-    fun String.idx() = metaVarIdx.getOrPut(this) {
-        metaVars.add(this)
-        metaVarIdx.size
-    }
-}
-
-private data class MetaVarPlaceHolders(
-    val placeHolderRequiredMetaVars: Set<String>,
-)
-
-private fun computePlaceHolders(
-    taintRuleEdges: List<TaintRuleEdge>,
-    finalAcceptEdges: List<TaintRuleEdge>,
-    finalDeadEdges: List<TaintRuleEdge>,
-): MetaVarPlaceHolders {
-    val predecessors = hashMapOf<State, MutableList<TaintRuleEdge>>()
-    taintRuleEdges.forEach { predecessors.getOrPut(it.stateTo, ::mutableListOf).add(it) }
-    finalAcceptEdges.forEach { predecessors.getOrPut(it.stateTo, ::mutableListOf).add(it) }
-    finalDeadEdges.forEach { predecessors.getOrPut(it.stateTo, ::mutableListOf).add(it) }
-
-    val metaVarCtx = MetaVarCtx()
-
-    val resultPlaceHolders = BitSet()
-    val unprocessed = mutableListOf<Pair<State, PersistentBitSet>>()
-    val visited = hashSetOf<Pair<State, PersistentBitSet>>()
-    finalAcceptEdges.mapTo(unprocessed) { it.stateTo to emptyPersistentBitSet() }
-    finalDeadEdges.mapTo(unprocessed) { it.stateTo to emptyPersistentBitSet() }
-
-    while (unprocessed.isNotEmpty()) {
-        val entry = unprocessed.removeLast()
-        if (!visited.add(entry)) continue
-
-        val (state, statePlaceholders) = entry
-
-        for (edge in predecessors[state].orEmpty()) {
-            val edgeMetaVars = metaVarCtx.signatureMetaVars(edge.edge)
-
-            val nextMetaVars = statePlaceholders.persistentAddAll(edgeMetaVars)
-
-            // metavar has multiple usages
-            edgeMetaVars.and(statePlaceholders)
-            resultPlaceHolders.or(edgeMetaVars)
-
-            unprocessed.add(edge.stateFrom to nextMetaVars)
-        }
-    }
-
-    if (resultPlaceHolders.isEmpty) {
-        return MetaVarPlaceHolders(emptySet())
-    }
-
-    val placeHolders = hashSetOf<String>()
-    resultPlaceHolders.forEach { placeHolders.add(metaVarCtx.metaVars[it]) }
-    return MetaVarPlaceHolders(placeHolders)
-}
-
-private fun MetaVarCtx.signatureMetaVars(edge: Edge): BitSet = when (edge) {
-    Edge.AnalysisEnd -> BitSet()
-
-    is Edge.MethodCall -> {
-        val metaVars = BitSet()
-        edgeConditionSignatureMetaVars(edge.condition, metaVars)
-        edgeEffectSignatureMetaVars(edge.effect, metaVars)
-        metaVars
-    }
-
-    is Edge.MethodEnter -> {
-        val metaVars = BitSet()
-        edgeConditionSignatureMetaVars(edge.condition, metaVars)
-        edgeEffectSignatureMetaVars(edge.effect, metaVars)
-        metaVars
-    }
-}
-
-private fun MetaVarCtx.edgeConditionSignatureMetaVars(condition: EdgeCondition, metaVars: BitSet) {
-    condition.readMetaVar.values.forEach { predicates ->
-        predicates.forEach { predicateSignatureMetaVars(it.predicate, metaVars) }
-    }
-
-    condition.other.forEach { predicateSignatureMetaVars(it.predicate, metaVars) }
-}
-
-private fun MetaVarCtx.edgeEffectSignatureMetaVars(effect: EdgeEffect, metaVars: BitSet) {
-    effect.assignMetaVar.values.forEach { predicates ->
-        predicates.forEach { predicateSignatureMetaVars(it.predicate, metaVars) }
-    }
-}
-
-private fun MetaVarCtx.predicateSignatureMetaVars(predicate: Predicate, metaVars: BitSet) {
-    methodSignatureMetaVars(predicate.signature, metaVars)
-    predicate.constraint?.let { methodConstraintMetaVars(it, metaVars) }
-}
-
-private fun MetaVarCtx.methodSignatureMetaVars(signature: MethodSignature, metaVars: BitSet) {
-    typeNameMetaVars(signature.enclosingClassName.name, metaVars)
-
-    val name = signature.methodName.name
-    if (name is SignatureName.MetaVar) {
-        metaVars.set(name.metaVar.idx())
-    }
-}
-
-private fun MetaVarCtx.methodConstraintMetaVars(signature: MethodConstraint, metaVars: BitSet) {
-    when (signature) {
-        is ClassModifierConstraint -> signatureModifierMetaVars(signature.modifier, metaVars)
-        is MethodModifierConstraint -> signatureModifierMetaVars(signature.modifier, metaVars)
-        is NumberOfArgsConstraint -> {}
-        is ParamConstraint -> paramConditionMetaVars(signature.condition, metaVars)
-    }
-}
-
-private fun MetaVarCtx.signatureModifierMetaVars(sm: SignatureModifier, metaVars: BitSet) {
-    typeNameMetaVars(sm.type, metaVars)
-
-    val value = sm.value
-    if (value is SignatureModifierValue.MetaVar) {
-        metaVars.set(value.metaVar.idx())
-    }
-}
-
-private fun MetaVarCtx.paramConditionMetaVars(pc: ParamCondition.Atom, metaVars: BitSet) {
-    when (pc) {
-        is IsMetavar -> {} // handled semantically with taint engine
-        is ParamCondition.ParamModifier -> signatureModifierMetaVars(pc.modifier, metaVars)
-
-        is StringValueMetaVar -> {
-            /**
-             *  todo: for now we ignore metavar substitution
-             *  "$A"; "$A" will trigger for different A values
-             *  */
-        }
-
-        is ParamCondition.TypeIs -> {
-            typeNameMetaVars(pc.typeName, metaVars)
-        }
-
-        is ParamCondition.SpecificStaticFieldValue -> {
-            typeNameMetaVars(pc.fieldClass, metaVars)
-        }
-
-        ParamCondition.AnyStringLiteral,
-        is SpecificBoolValue,
-        is SpecificStringValue -> {
-            // do nothing, no metavars
-        }
-    }
-}
-
-private fun MetaVarCtx.typeNameMetaVars(typeName: TypeNamePattern, metaVars: BitSet) {
-    when (typeName) {
-        is TypeNamePattern.MetaVar -> {
-            metaVars.set(typeName.metaVar.idx())
-        }
-
-        TypeNamePattern.AnyType,
-        is TypeNamePattern.ClassName,
-        is TypeNamePattern.PrimitiveName,
-        is TypeNamePattern.FullyQualified -> {
-            // no metavars
-        }
-    }
-}
-
-private fun Edge.ensurePositiveCondition(ctx: RuleConversionCtx): Edge? = when (this) {
-    Edge.AnalysisEnd -> this
-    is Edge.MethodCall -> condition.ensurePositiveCondition(ctx)?.let { copy(condition = it) }
-    is Edge.MethodEnter -> condition.ensurePositiveCondition(ctx)?.let { copy(condition = it) }
-}
-
-private fun EdgeCondition.ensurePositiveCondition(ctx: RuleConversionCtx): EdgeCondition? {
-    if (containsPositivePredicate()) return this
-
-    val signatures = hashSetOf<MethodSignature>()
-    other.mapTo(signatures) { it.predicate.signature }
-    readMetaVar.values.forEach { predicates -> predicates.mapTo(signatures) { it.predicate.signature } }
-
-    if (signatures.size == 1) {
-        // !f(a) /\ !f(b) -> f(*) /\ !f(a) /\ !f(b)
-        val commonSignature = signatures.single()
-        val positivePredicate = Predicate(commonSignature, constraint = null)
-        val otherPredicates = other + MethodPredicate(positivePredicate, negated = false)
-        return copy(other = otherPredicates)
-    }
-
-    ctx.semgrepRuleTrace.error(
-        "Edge without positive predicate",
-        Reason.ERROR
-    )
-
-    return null
-}
-
-private fun EdgeCondition.findPositivePredicate(): Predicate? =
-    other.find { !it.negated }?.predicate
-        ?: readMetaVar.values.firstNotNullOfOrNull { p -> p.find { !it.negated }?.predicate }
-
-private fun EdgeCondition.containsPositivePredicate(): Boolean =
-    other.any { !it.negated } || readMetaVar.values.any { p -> p.any { !it.negated } }
-
-private fun Edge.canAssignStateVar(): Boolean = when (this) {
-    Edge.AnalysisEnd -> false
-    is Edge.MethodCall -> true
-    is Edge.MethodEnter -> true
-}
-
 private data class RegisterVarPosition(val varName: MetavarAtom, val positions: MutableSet<PositionBase>)
 
 private data class RuleCondition(
@@ -2211,60 +651,127 @@ private fun TaintRuleGenerationCtx.generateTaintSinkRules(
     id: String, meta: SinkMetaData,
     semgrepRuleTrace: SemgrepRuleLoadStepTrace,
     checkRule: (SerializedFunctionNameMatcher, SerializedCondition) -> Boolean,
-) = generateTaintRules({ currentRules, ruleEdge, _, function, cond ->
-    if (!checkRule(function, cond)) {
-        return@generateTaintRules emptyList()
+): List<SerializedItem> {
+    class SinkRuleGen : AcceptStateRuleGenerator {
+        override fun generateAcceptStateRules(
+            currentRules: List<SerializedItem>,
+            ruleEdge: TaintRuleEdge,
+            condition: EvaluatedEdgeCondition,
+            function: SerializedFunctionNameMatcher,
+            cond: SerializedCondition,
+        ): List<SerializedItem> {
+            if (!checkRule(function, cond)) {
+                return emptyList()
+            }
+
+            val afterSinkActions = buildStateAssignAction(ruleEdge.stateTo, condition)
+
+            return when (ruleEdge.edgeKind) {
+                TaintRuleEdge.Kind.MethodEnter -> listOf(
+                    SerializedRule.MethodEntrySink(
+                        function, signature = null, overrides = false, cond,
+                        trackFactsReachAnalysisEnd = afterSinkActions,
+                        id, meta = meta
+                    )
+                )
+
+                TaintRuleEdge.Kind.MethodCall -> listOf(
+                    SerializedRule.Sink(
+                        function, signature = null, overrides = true, cond,
+                        trackFactsReachAnalysisEnd = afterSinkActions,
+                        id, meta = meta
+                    )
+                )
+
+                TaintRuleEdge.Kind.MethodExit -> {
+                    generateEndSink(currentRules, cond, afterSinkActions, id, meta)
+                }
+            }
+        }
     }
 
-    if (function.isGeneratedReturnValue()) {
-        return@generateTaintRules generateEndSink(currentRules, cond, id, meta)
-    }
-
-    val rule = when (ruleEdge.edge) {
-        is Edge.MethodEnter -> SerializedRule.MethodEntrySink(
-            function, signature = null, overrides = false, cond, id, meta = meta
-        )
-
-        is Edge.MethodCall -> SerializedRule.Sink(
-            function, signature = null, overrides = true, cond, id, meta = meta
-        )
-
-        Edge.AnalysisEnd -> return@generateTaintRules generateEndSink(currentRules, cond, id, meta)
-    }
-    listOf(rule)
-}, semgrepRuleTrace)
+    return generateTaintRules(semgrepRuleTrace, SinkRuleGen())
+}
 
 private fun TaintRuleGenerationCtx.generateTaintSanitizerRules(
     taintMarkName: String,
     semgrepRuleTrace: SemgrepRuleLoadStepTrace,
-) = generateTaintRules({ _, ruleEdge, _, function, cond ->
-    if (ruleEdge.edge !is Edge.MethodCall) {
-        semgrepRuleTrace.error("Non method call cleaner", Reason.NOT_IMPLEMENTED)
+): List<SerializedItem> {
+    class SanitizerRuleGen : AcceptStateRuleGenerator {
+        override fun generateAcceptStateRules(
+            currentRules: List<SerializedItem>,
+            ruleEdge: TaintRuleEdge,
+            condition: EvaluatedEdgeCondition,
+            function: SerializedFunctionNameMatcher,
+            cond: SerializedCondition
+        ): List<SerializedItem> {
+            if (ruleEdge.stateTo.register.assignedVars.isNotEmpty()) {
+                semgrepRuleTrace.error("Assigned vars after cleaner state", Reason.NOT_IMPLEMENTED)
+            }
+
+            if (ruleEdge.edgeKind != TaintRuleEdge.Kind.MethodCall) {
+                semgrepRuleTrace.error("Non method call cleaner", Reason.NOT_IMPLEMENTED)
+            }
+
+            val cleanerPos = PositionBase.AnyArgument(classifier = "tainted")
+            val action = SerializedTaintCleanAction(taintMarkName, cleanerPos.base())
+            val rule = SerializedRule.Cleaner(function, signature = null, overrides = true, cond, listOf(action))
+
+            return listOf(rule)
+        }
     }
 
-    val cleanerPos = PositionBase.AnyArgument(classifier = "tainted")
-    val action = SerializedTaintCleanAction(taintMarkName, PositionBaseWithModifiers.BaseOnly(cleanerPos))
-    val rule = SerializedRule.Cleaner(function, signature = null, overrides = true, cond, listOf(action))
-
-    listOf(rule)
-}, semgrepRuleTrace)
+    return generateTaintRules(semgrepRuleTrace, SanitizerRuleGen())
+}
 
 private fun generateEndSink(
     currentRules: List<SerializedItem>,
     cond: SerializedCondition,
+    afterSinkActions: List<SerializedTaintAssignAction>,
     id: String,
-    meta: SinkMetaData
+    meta: SinkMetaData,
 ): List<SinkRule> {
+    val endActions = afterSinkActions.map { it.copy(pos = it.pos.rewriteAsEndPosition()) }
+    return generateMethodEndRule(
+        currentRules = currentRules,
+        cond = cond,
+        generateWithoutMatchedEp = { endCondition ->
+            listOf(
+                SerializedRule.MethodExitSink(
+                    anyFunction(), signature = null, overrides = false, endCondition,
+                    trackFactsReachAnalysisEnd = endActions,
+                    id, meta = meta
+                )
+            )
+        },
+        generateWithEp = { ep, endCondition ->
+            listOf(
+                SerializedRule.MethodExitSink(
+                    ep.function, ep.signature, ep.overrides, endCondition,
+                    trackFactsReachAnalysisEnd = endActions,
+                    id, meta = meta
+                )
+            )
+        }
+    )
+}
+
+private inline fun <R: SerializedItem> generateMethodEndRule(
+    currentRules: List<SerializedItem>,
+    cond: SerializedCondition,
+    generateWithoutMatchedEp: (SerializedCondition) -> List<R>,
+    generateWithEp: (SerializedRule.EntryPoint, SerializedCondition) -> List<R>,
+): List<R> {
     val endCondition = cond.rewriteAsEndCondition()
     val entryPointRules = currentRules.filterIsInstance<SerializedRule.EntryPoint>()
 
     if (entryPointRules.isEmpty()) {
-        return listOf(AnalysisEndSink(endCondition, id, meta = meta))
+        return generateWithoutMatchedEp(endCondition)
     }
 
-    return entryPointRules.map { rule ->
-        val sinkCond = SerializedCondition.and(listOf(rule.condition ?: SerializedCondition.True, endCondition))
-        SerializedRule.MethodExitSink(rule.function, rule.signature, rule.overrides, sinkCond, id, meta = meta)
+    return entryPointRules.flatMap { rule ->
+        val generatedCond = SerializedCondition.and(listOf(rule.condition ?: SerializedCondition.True, endCondition))
+        generateWithEp(rule, generatedCond)
     }
 }
 
@@ -2308,41 +815,79 @@ private fun PositionBase.rewriteAsEndPosition(): PositionBase = when (this) {
     PositionBase.This -> this
 }
 
+private fun generateMethodEndSource(
+    currentRules: List<SerializedItem>,
+    cond: SerializedCondition,
+    actions: List<SerializedTaintAssignAction>,
+): List<SerializedRule.MethodExitSource> {
+    val endActions = actions.map { it.copy(pos = it.pos.rewriteAsEndPosition()) }
+    return generateMethodEndRule(
+        currentRules = currentRules,
+        cond = cond,
+        generateWithoutMatchedEp = { endCond ->
+            listOf(
+                SerializedRule.MethodExitSource(
+                    anyFunction(), signature = null, overrides = false, endCond, endActions
+                )
+            )
+        },
+        generateWithEp = { ep, endCond ->
+            listOf(
+                SerializedRule.MethodExitSource(
+                    ep.function, ep.signature, ep.overrides, endCond, endActions
+                )
+            )
+        }
+    )
+}
+
 private fun TaintRuleGenerationCtx.generateTaintSourceRules(
     stateVars: Set<MetavarAtom>, taintMarkName: String,
     semgrepRuleTrace: SemgrepRuleLoadStepTrace,
-) = generateTaintRules({ _, ruleEdge, condition, function, cond ->
-    val actions = stateVars.flatMapTo(mutableListOf()) { varName ->
-        val varPosition = condition.accessedVarPosition[varName] ?: return@flatMapTo emptyList()
-        varPosition.positions.map {
-            SerializedTaintAssignAction(taintMarkName, pos = PositionBaseWithModifiers.BaseOnly(it))
+): List<SerializedItem> {
+    class TaintSourceAcceptStateGen : AcceptStateRuleGenerator {
+        override fun generateAcceptStateRules(
+            currentRules: List<SerializedItem>,
+            ruleEdge: TaintRuleEdge,
+            condition: EvaluatedEdgeCondition,
+            function: SerializedFunctionNameMatcher,
+            cond: SerializedCondition
+        ): List<SerializedItem> {
+            val nonStateVars = ruleEdge.stateTo.register.assignedVars.keys - stateVars
+            if (nonStateVars.isNotEmpty()) {
+                semgrepRuleTrace.error("Final state has non-state vars assigned", Reason.ERROR)
+            }
+
+            val actions = stateVars.flatMapTo(mutableListOf()) { varName ->
+                val varPosition = condition.accessedVarPosition[varName] ?: return@flatMapTo emptyList()
+                varPosition.positions.map {
+                    SerializedTaintAssignAction(taintMarkName, pos = it.base())
+                }
+            }
+
+            if (actions.isEmpty()) return emptyList()
+
+            return when (ruleEdge.edgeKind) {
+                TaintRuleEdge.Kind.MethodCall -> listOf(
+                    SerializedRule.Source(
+                        function, signature = null, overrides = true, cond, actions
+                    )
+                )
+
+                TaintRuleEdge.Kind.MethodEnter -> listOf(
+                    SerializedRule.EntryPoint(
+                        function, signature = null, overrides = false, cond, actions
+                    )
+                )
+
+                TaintRuleEdge.Kind.MethodExit -> {
+                    generateMethodEndSource(currentRules, cond, actions)
+                }
+            }
         }
     }
-
-    if (actions.isEmpty()) return@generateTaintRules emptyList()
-
-    if (function.isGeneratedReturnValue()) {
-        semgrepRuleTrace.error("Eliminate generated return value", Reason.NOT_IMPLEMENTED)
-        return@generateTaintRules emptyList()
-    }
-
-    val rule = when (ruleEdge.edge) {
-        is Edge.MethodCall -> SerializedRule.Source(
-            function, signature = null, overrides = true, cond, actions
-        )
-
-        is Edge.MethodEnter -> SerializedRule.EntryPoint(
-            function, signature = null, overrides = false, cond, actions
-        )
-
-        Edge.AnalysisEnd -> {
-            semgrepRuleTrace.error("Analysis end in generate taint source", Reason.NOT_IMPLEMENTED)
-            return@generateTaintRules emptyList()
-        }
-    }
-
-    listOf(rule)
-}, semgrepRuleTrace)
+    return generateTaintRules(semgrepRuleTrace, TaintSourceAcceptStateGen())
+}
 
 private fun SinkRuleGenerationCtx.generateTaintPassRules(
     fromVar: MetavarAtom, toVar: MetavarAtom,
@@ -2353,90 +898,75 @@ private fun SinkRuleGenerationCtx.generateTaintPassRules(
     return generateTaintSourceRules(setOf(toVar), taintMarkName, semgrepRuleTrace)
 }
 
+private interface AcceptStateRuleGenerator {
+    fun generateAcceptStateRules(
+        currentRules: List<SerializedItem>,
+        ruleEdge: TaintRuleEdge,
+        condition: EvaluatedEdgeCondition,
+        function: SerializedFunctionNameMatcher,
+        cond: SerializedCondition,
+    ): List<SerializedItem>
+}
+
 private fun TaintRuleGenerationCtx.generateTaintRules(
-    generateAcceptStateRules: (
-        currentGeneratedRules: List<SerializedItem>,
-        TaintRuleEdge,
-        EvaluatedEdgeCondition,
-        SerializedFunctionNameMatcher,
-        SerializedCondition
-    ) -> List<SerializedItem>,
     semgrepRuleTrace: SemgrepRuleLoadStepTrace,
+    acceptStateRuleGen: AcceptStateRuleGenerator,
 ): List<SerializedItem> {
     val rules = mutableListOf<SerializedItem>()
 
-    val evaluatedConditions = hashMapOf<Edge, EvaluatedEdgeCondition>()
+    val evaluatedConditions = hashMapOf<TaintRuleEdge, EvaluatedEdgeCondition>()
 
-    fun evaluate(edge: Edge): EvaluatedEdgeCondition =
-        evaluatedConditions.getOrPut(edge) { evaluateEdgeCondition(edge, semgrepRuleTrace) }
+    fun evaluate(edge: TaintRuleEdge): EvaluatedEdgeCondition =
+        evaluatedConditions.getOrPut(edge) {
+            evaluateMethodConditionAndEffect(edge.edgeCondition, edge.edgeEffect, semgrepRuleTrace)
+        }
 
     for (ruleEdge in edges) {
-        val edge = ruleEdge.edge
         val state = ruleEdge.stateFrom
 
-        val condition = evaluate(edge).addStateCheck(this, ruleEdge.checkGlobalState, state)
+        val condition = evaluate(ruleEdge).addStateCheck(this, ruleEdge.checkGlobalState, state)
         rules += condition.additionalFieldRules
 
-        val nodeId = automata.stateId(ruleEdge.stateTo)
-
-        val requiredVariables = ruleEdge.stateTo.register.assignedVars.keys
-        val actions = requiredVariables.flatMapTo(mutableListOf()) { varName ->
-            val varPosition = condition.accessedVarPosition[varName] ?: return@flatMapTo emptyList()
-            val stateMark = stateMarkName(varPosition.varName, nodeId)
-
-            varPosition.positions.flatMap {
-                val pos = PositionBaseWithModifiers.BaseOnly(it)
-                listOf(SerializedTaintAssignAction(stateMark, pos = pos))
-            }
-        }
-
-        if (ruleEdge.stateTo in globalStateAssignStates) {
-            actions += SerializedTaintAssignAction(globalStateMarkName(ruleEdge.stateTo), pos = stateVarPosition)
-        }
+        val actions = buildStateAssignAction(ruleEdge.stateTo, condition)
 
         if (actions.isNotEmpty()) {
             rules += generateRules(condition.ruleCondition) { function, cond ->
-                if (function.isGeneratedReturnValue()) {
-                    semgrepRuleTrace.error("Eliminate generated return value", Reason.NOT_IMPLEMENTED)
-                    return@generateRules emptyList()
-                }
-
-                val rule = when (edge) {
-                    is Edge.MethodCall -> SerializedRule.Source(
-                        function, signature = null, overrides = true, cond, actions
+                when (ruleEdge.edgeKind) {
+                    TaintRuleEdge.Kind.MethodCall -> listOf(
+                        SerializedRule.Source(
+                            function, signature = null, overrides = true, cond, actions
+                        )
                     )
 
-                    is Edge.MethodEnter -> SerializedRule.EntryPoint(
-                        function, signature = null, overrides = false, cond, actions
+                    TaintRuleEdge.Kind.MethodEnter -> listOf(
+                        SerializedRule.EntryPoint(
+                            function, signature = null, overrides = false, cond, actions
+                        )
                     )
 
-                    Edge.AnalysisEnd -> {
-                        semgrepRuleTrace.error("Analysis end in generate taint rules", Reason.NOT_IMPLEMENTED)
-                        return@generateRules emptyList()
+                    TaintRuleEdge.Kind.MethodExit -> {
+                        generateMethodEndSource(rules, cond, actions)
                     }
                 }
-                listOf(rule)
             }
         }
     }
 
     for (ruleEdge in edgesToFinalAccept) {
-        val edge = ruleEdge.edge
         val state = ruleEdge.stateFrom
 
-        val condition = evaluate(edge).addStateCheck(this, ruleEdge.checkGlobalState, state)
+        val condition = evaluate(ruleEdge).addStateCheck(this, ruleEdge.checkGlobalState, state)
         rules += condition.additionalFieldRules
 
         rules += generateRules(condition.ruleCondition) { function, cond ->
-            generateAcceptStateRules(rules, ruleEdge, condition, function, cond)
+            acceptStateRuleGen.generateAcceptStateRules(rules, ruleEdge, condition, function, cond)
         }
     }
 
     for (ruleEdge in edgesToFinalDead) {
-        val edge = ruleEdge.edge
         val state = ruleEdge.stateFrom
 
-        val condition = evaluate(edge).addStateCheck(this, ruleEdge.checkGlobalState, state)
+        val condition = evaluate(ruleEdge).addStateCheck(this, ruleEdge.checkGlobalState, state)
         rules += condition.additionalFieldRules
 
         val actions = condition.accessedVarPosition.values.flatMapTo(mutableListOf()) { varPosition ->
@@ -2444,8 +974,7 @@ private fun TaintRuleGenerationCtx.generateTaintRules(
             val stateMark = stateMarkName(varPosition.varName, value)
 
             varPosition.positions.flatMap {
-                val pos = PositionBaseWithModifiers.BaseOnly(it)
-                listOf(SerializedTaintCleanAction(stateMark, pos = pos))
+                listOf(SerializedTaintCleanAction(stateMark, pos = it.base()))
             }
         }
 
@@ -2454,24 +983,47 @@ private fun TaintRuleGenerationCtx.generateTaintRules(
         }
 
         if (actions.isNotEmpty()) {
-            if (edge !is Edge.MethodCall) {
-                TODO("Non method call cleaner")
-            }
-
-            rules += generateRules(condition.ruleCondition) { function, cond ->
-                if (function.isGeneratedReturnValue()) {
-                    semgrepRuleTrace.error("Eliminate generated return value", Reason.NOT_IMPLEMENTED)
-                    return@generateRules emptyList()
+            when (ruleEdge.edgeKind) {
+                TaintRuleEdge.Kind.MethodEnter, TaintRuleEdge.Kind.MethodExit -> {
+                    semgrepRuleTrace.error("Non method call cleaner", Reason.NOT_IMPLEMENTED)
+                    continue
                 }
 
-                listOf(
-                    SerializedRule.Cleaner(function, signature = null, overrides = true, cond, actions)
-                )
+                TaintRuleEdge.Kind.MethodCall -> {
+                    rules += generateRules(condition.ruleCondition) { function, cond ->
+                        listOf(
+                            SerializedRule.Cleaner(function, signature = null, overrides = true, cond, actions)
+                        )
+                    }
+                }
             }
         }
     }
 
     return rules
+}
+
+private fun TaintRuleGenerationCtx.buildStateAssignAction(
+    state: State,
+    edgeCondition: EvaluatedEdgeCondition
+): List<SerializedTaintAssignAction> {
+    val requiredVariables = state.register.assignedVars.keys
+    val stateId = automata.stateId(state)
+
+    val result = requiredVariables.flatMapTo(mutableListOf()) { varName ->
+        val varPosition = edgeCondition.accessedVarPosition[varName] ?: return@flatMapTo emptyList()
+        val stateMark = stateMarkName(varPosition.varName, stateId)
+
+        varPosition.positions.map {
+            SerializedTaintAssignAction(stateMark, pos = it.base())
+        }
+    }
+
+    if (state in globalStateAssignStates) {
+        result += SerializedTaintAssignAction(globalStateMarkName(state), pos = stateVarPosition)
+    }
+
+    return result
 }
 
 private fun EvaluatedEdgeCondition.addStateCheck(
@@ -2487,8 +1039,7 @@ private fun EvaluatedEdgeCondition.addStateCheck(
             val markName = ctx.stateMarkName(metaVar, value)
 
             for (pos in accessedVarPosition[metaVar]?.positions.orEmpty()) {
-                val position = PositionBaseWithModifiers.BaseOnly(pos)
-                stateChecks += SerializedCondition.ContainsMark(markName, position)
+                stateChecks += SerializedCondition.ContainsMark(markName, pos.base())
             }
         }
     }
@@ -2511,15 +1062,6 @@ private inline fun <T> generateRules(
     )
 
     return body(functionMatcher, condition.condition)
-}
-
-private fun TaintRuleGenerationCtx.evaluateEdgeCondition(
-    edge: Edge,
-    semgrepRuleTrace: SemgrepRuleLoadStepTrace,
-): EvaluatedEdgeCondition = when (edge) {
-    is Edge.MethodCall -> evaluateMethodConditionAndEffect(edge.condition, edge.effect, semgrepRuleTrace)
-    is Edge.MethodEnter -> evaluateMethodConditionAndEffect(edge.condition, edge.effect, semgrepRuleTrace)
-    Edge.AnalysisEnd -> EvaluatedEdgeCondition(RuleConditionBuilder().build(), emptyList(), emptyMap())
 }
 
 private class RuleConditionBuilder {
@@ -2626,6 +1168,10 @@ private fun TaintRuleGenerationCtx.evaluateFormulaSignature(
 
     if (signature.isGeneratedAnyValueGenerator()) {
         TODO("Eliminate generated method")
+    }
+
+    if (signature.isGeneratedStringConcat()) {
+        TODO("Eliminate generated string concat")
     }
 
     val methodName = signature.methodName.name
@@ -2995,9 +1541,8 @@ private fun TaintRuleGenerationCtx.evaluateParamCondition(
                 )
             }
 
-            val pos = PositionBaseWithModifiers.BaseOnly(position)
             val conditions = allMarkValues(condition.metavar).map {
-                SerializedCondition.ContainsMark(it, pos)
+                SerializedCondition.ContainsMark(it, position.base())
             }
             return serializedConditionOr(conditions)
         }
@@ -3023,15 +1568,13 @@ private fun TaintRuleGenerationCtx.evaluateParamCondition(
             )
 
             val action = SerializedTaintAssignAction(
-                mark, pos = PositionBaseWithModifiers.BaseOnly(PositionBase.Result)
+                mark, pos = PositionBase.Result.base()
             )
             additionalFieldRules += SerializedFieldRule.SerializedStaticFieldSource(
                 enclosingClassMatcher, condition.fieldName, condition = null, listOf(action)
             )
 
-            return SerializedCondition.ContainsMark(
-                mark, PositionBaseWithModifiers.BaseOnly(position)
-            )
+            return SerializedCondition.ContainsMark(mark, position.base())
         }
 
         ParamCondition.AnyStringLiteral -> {
@@ -3073,138 +1616,6 @@ private fun TaintRuleGenerationCtx.evaluateParamCondition(
             val annotation = signatureModifierConstraint(condition.modifier)
             return SerializedCondition.ParamAnnotated(position, annotation)
         }
-    }
-}
-
-private fun simulateCondition(
-    edge: Edge,
-    stateId: Int,
-    initialRegister: StateRegister
-) = when (edge) {
-    is Edge.MethodCall -> simulateEdgeEffect(edge.effect, stateId, initialRegister)
-    is Edge.MethodEnter -> simulateEdgeEffect(edge.effect, stateId, initialRegister)
-    Edge.AnalysisEnd -> StateRegister(emptyMap())
-}
-
-private fun simplifyEdgeCondition(
-    formulaManager: MethodFormulaManager,
-    metaVarInfo: ResolvedMetaVarInfo,
-    cancelation: OperationCancelation,
-    edge: AutomataEdgeType
-) = when (edge) {
-    is AutomataEdgeType.AutomataEdgeTypeWithFormula -> {
-        simplifyMethodFormula(
-            formulaManager, edge.formula, metaVarInfo, cancelation, applyNotEquivalentTransformations = true
-        ).map {
-            val (effect, cond) = edgeEffectAndCondition(it, formulaManager)
-
-            when (edge) {
-                is AutomataEdgeType.InitialLoopMethodCall -> Edge.MethodCall(cond, effect)
-                is AutomataEdgeType.MethodCall -> Edge.MethodCall(cond, effect)
-                is AutomataEdgeType.MethodEnter -> Edge.MethodEnter(cond, effect)
-            }
-        }
-    }
-
-    AutomataEdgeType.End -> listOf(Edge.AnalysisEnd)
-
-    AutomataEdgeType.PatternEnd, AutomataEdgeType.PatternStart -> error("unexpected edge type: $edge")
-}
-
-private fun Cube.predicates(manager: MethodFormulaManager): List<MethodPredicate> {
-    check(!negated) { "Negated cube" }
-
-    val result = mutableListOf<MethodPredicate>()
-    cube.positiveLiterals.forEach {
-        result += MethodPredicate(manager.predicate(it), negated = false)
-    }
-    cube.negativeLiterals.forEach {
-        result += MethodPredicate(manager.predicate(it), negated = true)
-    }
-    return result
-}
-
-private fun edgeEffectAndCondition(cube: Cube, formulaManager: MethodFormulaManager): Pair<EdgeEffect, EdgeCondition> {
-    val predicates = cube.predicates(formulaManager)
-
-    val metaVarWrite = hashMapOf<MetavarAtom, MutableList<MethodPredicate>>()
-    val metaVarRead = hashMapOf<MetavarAtom, MutableList<MethodPredicate>>()
-    val other = mutableListOf<MethodPredicate>()
-
-    for (mp in predicates) {
-        val metaVar = mp.findMetaVarConstraint()
-
-        if (!mp.negated && metaVar != null) {
-            metaVarWrite.getOrPut(metaVar, ::mutableListOf).add(mp)
-        }
-
-        if (metaVar != null) {
-            metaVarRead.getOrPut(metaVar, ::mutableListOf).add(mp)
-        } else {
-            other.add(mp)
-        }
-    }
-
-    return EdgeEffect(metaVarWrite) to EdgeCondition(metaVarRead, other)
-}
-
-private fun MethodPredicate.findMetaVarConstraint(): MetavarAtom? {
-    val constraint = predicate.constraint
-    return ((constraint as? ParamConstraint)?.condition as? IsMetavar)?.metavar
-}
-
-private fun simulateEdgeEffect(
-    effect: EdgeEffect,
-    stateId: Int,
-    initialRegister: StateRegister,
-): StateRegister {
-    if (effect.assignMetaVar.isEmpty()) return initialRegister
-
-    val newStateVars = initialRegister.assignedVars.toMutableMap()
-    effect.assignMetaVar.keys.forEach {
-        newStateVars[it] = stateId
-    }
-
-    effect.assignMetaVar.keys.forEach { metavar ->
-        val basics = metavar.basics
-        val toDelete = newStateVars.keys.filter {
-            it.basics.intersect(basics).isNotEmpty() && it.basics.size < basics.size
-        }
-        toDelete.forEach(newStateVars::remove)
-    }
-
-    return StateRegister(newStateVars)
-}
-
-private fun anyName() = SerializedNameMatcher.Pattern(".*")
-
-private fun SerializedFunctionNameMatcher.matchAnything(): Boolean =
-    `class` == anyName() && `package` == anyName() && name == anyName()
-
-private fun SerializedFunctionNameMatcher.isGeneratedReturnValue(): Boolean {
-    val name = this.name as? SerializedNameMatcher.Simple ?: return false
-    return name.value == generatedReturnValueMethod
-}
-
-private fun serializedConditionOr(args: List<SerializedCondition>): SerializedCondition {
-    val result = mutableListOf<SerializedCondition>()
-    for (arg in args) {
-        if (arg is SerializedCondition.Or) {
-            result.addAll(arg.anyOf)
-            continue
-        }
-
-        if (arg is SerializedCondition.True) return SerializedCondition.True
-
-        if (arg.isFalse()) continue
-
-        result.add(arg)
-    }
-
-    return when (result.size) {
-        0 -> mkFalse()
-        1 -> result.single()
-        else -> SerializedCondition.Or(result)
     }
 }
 

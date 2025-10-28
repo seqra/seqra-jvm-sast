@@ -1,5 +1,7 @@
 package org.seqra.semgrep.pattern.conversion
 
+import org.seqra.org.seqra.semgrep.pattern.Mark
+import org.seqra.org.seqra.semgrep.pattern.conversion.parseMethodArgs
 import org.seqra.semgrep.pattern.AddExpr
 import org.seqra.semgrep.pattern.Annotation
 import org.seqra.semgrep.pattern.ArrayAccess
@@ -25,10 +27,8 @@ import org.seqra.semgrep.pattern.MethodDeclaration
 import org.seqra.semgrep.pattern.MethodInvocation
 import org.seqra.semgrep.pattern.Modifier
 import org.seqra.semgrep.pattern.NamedValue
-import org.seqra.semgrep.pattern.NoArgs
 import org.seqra.semgrep.pattern.NullLiteral
 import org.seqra.semgrep.pattern.ObjectCreation
-import org.seqra.semgrep.pattern.PatternArgumentPrefix
 import org.seqra.semgrep.pattern.PatternSequence
 import org.seqra.semgrep.pattern.ReturnStmt
 import org.seqra.semgrep.pattern.SemgrepErrorEntry
@@ -50,7 +50,7 @@ class PatternToActionListConverter: ActionListBuilder {
     private var nextArtificialMetavarId = 0
 
     private fun provideArtificialMetavar(): String {
-        return "\$<ARTIFICIAL>_${nextArtificialMetavarId++}"
+        return "\$${Mark.ArtificialMetavarName}_${nextArtificialMetavarId++}"
     }
 
     val failedTransformations = mutableMapOf<String, Int>()
@@ -63,7 +63,9 @@ class PatternToActionListConverter: ActionListBuilder {
         pattern: SemgrepJavaPattern,
         semgrepTrace: SemgrepRuleLoadStepTrace,
     ): SemgrepPatternActionList? = try {
-        transformPatternToActionList(pattern, isRootPattern = true)
+        withTrace(semgrepTrace) {
+            transformPatternToActionList(pattern, isRootPattern = true)
+        }
     } catch (ex: TransformationFailed) {
         val reason = ex.message
         val oldValue = failedTransformations.getOrDefault(reason, 0)
@@ -76,11 +78,20 @@ class PatternToActionListConverter: ActionListBuilder {
         null
     }
 
+    private var semgrepTrace: SemgrepRuleLoadStepTrace? = null
+    private fun <T> withTrace(trace: SemgrepRuleLoadStepTrace, body: () -> T): T = try {
+        semgrepTrace = trace
+        body()
+    } finally {
+        semgrepTrace = null
+    }
+
     private fun transformPatternToActionList(
         pattern: SemgrepJavaPattern,
         isRootPattern: Boolean = false
     ): SemgrepPatternActionList = when (pattern) {
-            Ellipsis -> SemgrepPatternActionList(emptyList(), hasEllipsisInTheEnd = true, hasEllipsisInTheBeginning = true)
+            is Ellipsis -> SemgrepPatternActionList(emptyList(), hasEllipsisInTheEnd = true, hasEllipsisInTheBeginning = true)
+            is EmptyPatternSequence -> SemgrepPatternActionList(emptyList(), hasEllipsisInTheEnd = false , hasEllipsisInTheBeginning = false)
             is PatternSequence -> transformPatternSequence(pattern)
             is MethodInvocation -> transformMethodInvocation(pattern)
             is ObjectCreation -> transformObjectCreation(pattern)
@@ -88,6 +99,7 @@ class PatternToActionListConverter: ActionListBuilder {
             is MethodDeclaration -> transformMethodDeclaration(pattern)
             is ClassDeclaration -> transformClassDeclaration(pattern)
             is EllipsisMethodInvocations -> transformEllipsisMethodInvocations(pattern)
+            is ReturnStmt -> transformReturnStmt(pattern)
             is AddExpr,
             is BoolConstant,
             EmptyPatternSequence,
@@ -98,7 +110,6 @@ class PatternToActionListConverter: ActionListBuilder {
             is Identifier,
             is Metavar,
             is MethodArguments,
-            is ReturnStmt,
             StringEllipsis,
             is StringLiteral,
             ThisExpr,
@@ -198,7 +209,7 @@ class PatternToActionListConverter: ActionListBuilder {
 
     private fun transformTypeName(typeName: TypeName): TypeNamePattern {
         if (typeName.typeArgs.isNotEmpty()) {
-            transformationFailed("TypeName_with_type_args")
+            semgrepTrace?.error("Type arguments ignored", SemgrepErrorEntry.Reason.WARNING)
         }
 
         if (typeName.dotSeparatedParts.size == 1) {
@@ -231,9 +242,17 @@ class PatternToActionListConverter: ActionListBuilder {
     private fun transformPatternSequence(pattern: PatternSequence): SemgrepPatternActionList {
         val first = transformPatternToActionList(pattern.first)
         val second = transformPatternToActionList(pattern.second)
+
+        var endEllipsis = second.hasEllipsisInTheEnd
+        if (endEllipsis) {
+            if (second.actions.isEmpty() && first.actions.lastOrNull() is SemgrepPatternAction.MethodExit) {
+                endEllipsis = false
+            }
+        }
+
         return SemgrepPatternActionList(
             first.actions + second.actions,
-            hasEllipsisInTheEnd = second.hasEllipsisInTheEnd,
+            hasEllipsisInTheEnd = endEllipsis,
             hasEllipsisInTheBeginning = first.hasEllipsisInTheBeginning,
         )
     }
@@ -245,9 +264,9 @@ class PatternToActionListConverter: ActionListBuilder {
             return null
         }
 
-        val objIRondition = transformPatternIntoParamCondition(pattern)
-        if (objIRondition != null) {
-            return emptyList<SemgrepPatternAction>() to objIRondition
+        val objCondition = transformPatternIntoParamCondition(pattern)
+        if (objCondition != null) {
+            return emptyList<SemgrepPatternAction>() to objCondition
         }
         val objActionList = transformPatternToActionList(pattern)
         if (objActionList.actions.isEmpty()) {
@@ -262,21 +281,8 @@ class PatternToActionListConverter: ActionListBuilder {
         return result to IsMetavar(MetavarAtom.create(metavar))
     }
 
-    private fun methodArgumentsToPatternList(pattern: MethodArguments): List<SemgrepJavaPattern> {
-        return when (pattern) {
-            is NoArgs -> {
-                emptyList()
-            }
-            is EllipsisArgumentPrefix -> {
-                val rest = methodArgumentsToPatternList(pattern.rest)
-                listOf(pattern) + rest
-            }
-            is PatternArgumentPrefix -> {
-                val rest = methodArgumentsToPatternList(pattern.rest)
-                listOf(pattern.argument) + rest
-            }
-        }
-    }
+    private fun methodArgumentsToPatternList(pattern: MethodArguments): List<SemgrepJavaPattern> =
+        parseMethodArgs(pattern)
 
     private fun tryConvertPatternIntoTypeName(pattern: SemgrepJavaPattern): TypeNamePattern? {
         if (pattern !is TypedMetavar) return null
@@ -293,7 +299,7 @@ class PatternToActionListConverter: ActionListBuilder {
 
         val className = pattern.obj?.let { tryConvertPatternIntoTypeName(it) }
 
-        val objIRondition = pattern.obj?.let { objPattern ->
+        val objCondition = pattern.obj?.let { objPattern ->
             val (actions, cond) = transformPatternIntoParamConditionWithActions(objPattern)
                 ?: transformationFailed("MethodInvocation_obj: ${objPattern::class.simpleName}")
 
@@ -309,7 +315,7 @@ class PatternToActionListConverter: ActionListBuilder {
             methodName = methodName,
             result = null,
             params = argsConditions,
-            obj = objIRondition,
+            obj = objCondition,
             enclosingClassName = className,
         )
         actionList += methodInvocationAction
@@ -321,7 +327,7 @@ class PatternToActionListConverter: ActionListBuilder {
 
         val className = tryConvertPatternIntoTypeName(pattern.obj)
 
-        val (actions, objIRondition) = transformPatternIntoParamConditionWithActions(pattern.obj)
+        val (actions, objCondition) = transformPatternIntoParamConditionWithActions(pattern.obj)
                 ?: transformationFailed("MethodInvocation_obj: ${pattern.obj::class.simpleName}")
         actionList += actions
 
@@ -329,7 +335,7 @@ class PatternToActionListConverter: ActionListBuilder {
             methodName = SignatureName.AnyName,
             result = null,
             params = ParamConstraint.Partial(emptyList()),
-            obj = objIRondition,
+            obj = objCondition,
             enclosingClassName = className ?: TypeNamePattern.AnyType,
         )
         actionList += methodInvocationAction
@@ -476,6 +482,24 @@ class PatternToActionListConverter: ActionListBuilder {
             listOf(methodSignature),
             hasEllipsisInTheEnd = true,
             hasEllipsisInTheBeginning = false
+        )
+    }
+
+    private fun transformReturnStmt(pattern: ReturnStmt): SemgrepPatternActionList {
+        val retValue = pattern.value
+        val (actions, cond) = if (retValue == null) {
+            emptyList<SemgrepPatternAction>() to null
+        } else {
+            transformPatternIntoParamConditionWithActions(retValue)
+                ?: transformationFailed("Return value: ${retValue::class.simpleName}")
+        }
+
+        val methodExit = SemgrepPatternAction.MethodExit(cond ?: ParamCondition.True)
+
+        return SemgrepPatternActionList(
+            actions + listOf(methodExit),
+            hasEllipsisInTheBeginning = false,
+            hasEllipsisInTheEnd = false
         )
     }
 

@@ -5,7 +5,7 @@ import org.seqra.dataflow.ap.ifds.trace.MethodTraceResolver.TraceEntry
 import org.seqra.semgrep.pattern.conversion.automata.PrintableGraph
 
 fun FullTrace.view() {
-    PrintableFullTrace(this).view()
+    PrintableFullTrace(this).view(name = "")
 }
 
 private class PrintableFullTrace(

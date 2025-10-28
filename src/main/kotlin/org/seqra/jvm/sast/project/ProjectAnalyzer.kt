@@ -11,7 +11,6 @@ import org.seqra.dataflow.configuration.jvm.serialized.SerializedTaintConfig
 import org.seqra.dataflow.configuration.jvm.serialized.loadSerializedTaintConfig
 import org.seqra.dataflow.jvm.ap.ifds.JIRSummarySerializationContext
 import org.seqra.dataflow.jvm.ap.ifds.taint.TaintRulesProvider
-import org.seqra.dataflow.jvm.ap.ifds.taint.applyAnalysisEndSinksForEntryPoints
 import org.seqra.dataflow.jvm.util.JIRSarifTraits
 import org.seqra.dataflow.sarif.SourceFileResolver
 import org.seqra.ir.api.common.cfg.CommonInst
@@ -178,7 +177,7 @@ class ProjectAnalyzer(
         val summarySerializationContext = JIRSummarySerializationContext(cp)
 
         JIRTaintAnalyzer(
-            cp, loadTaintConfig(cp).applyAnalysisEndSinksForEntryPoints(entryPoints.toHashSet()),
+            cp, loadTaintConfig(cp),
             projectLocations = projectClasses.projectLocations,
             ifdsTimeout = ifdsAnalysisTimeout,
             ifdsApMode = ifdsApMode,

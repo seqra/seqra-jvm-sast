@@ -1,9 +1,9 @@
 package org.seqra.jvm.sast.dataflow
 
+import org.seqra.dataflow.jvm.ap.ifds.taint.TaintRulesProvider
 import org.seqra.ir.api.common.CommonMethod
 import org.seqra.ir.api.common.cfg.CommonInst
 import org.seqra.ir.api.jvm.JIRField
-import org.seqra.dataflow.jvm.ap.ifds.taint.TaintRulesProvider
 
 class JIRCombinedTaintRulesProvider(
     private val base: TaintRulesProvider,
@@ -28,14 +28,14 @@ class JIRCombinedTaintRulesProvider(
     override fun sourceRulesForMethod(method: CommonMethod, statement: CommonInst) =
         combine(combinationOptions.source) { sourceRulesForMethod(method, statement) }
 
+    override fun exitSourceRulesForMethod(method: CommonMethod, statement: CommonInst) =
+        combine(combinationOptions.source) { exitSourceRulesForMethod(method, statement) }
+
     override fun sinkRulesForMethod(method: CommonMethod, statement: CommonInst) =
         combine(combinationOptions.sink) { sinkRulesForMethod(method, statement) }
 
     override fun sinkRulesForMethodExit(method: CommonMethod, statement: CommonInst) =
         combine(combinationOptions.sink) { sinkRulesForMethodExit(method, statement) }
-
-    override fun sinkRulesForAnalysisEnd(method: CommonMethod, statement: CommonInst) =
-        combine(combinationOptions.sink) { sinkRulesForAnalysisEnd(method, statement) }
 
     override fun sinkRulesForMethodEntry(method: CommonMethod) =
         combine(combinationOptions.sink) { sinkRulesForMethodEntry(method) }

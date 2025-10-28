@@ -15,7 +15,6 @@ import org.seqra.dataflow.jvm.ap.ifds.LambdaAnonymousClassFeature
 import org.seqra.dataflow.jvm.ap.ifds.LambdaExpressionToAnonymousClassTransformerFeature
 import org.seqra.dataflow.jvm.ap.ifds.analysis.JIRAnalysisManager
 import org.seqra.dataflow.jvm.ap.ifds.taint.TaintRulesProvider
-import org.seqra.dataflow.jvm.ap.ifds.taint.applyAnalysisEndSinksForEntryPoints
 import org.seqra.dataflow.jvm.graph.MethodReturnInstNormalizerFeature
 import org.seqra.dataflow.jvm.ifds.JIRUnitResolver
 import org.seqra.ir.api.common.CommonMethod
@@ -98,7 +97,11 @@ class TestAnalysisRunner(
             setupEngine(rulesProvider).use { engine ->
                 engine.runAnalysis(listOf(ep), timeout = 1.minutes, cancellationTimeout = 10.seconds)
 
-                val vulnerabilities = engine.getVulnerabilities()
+                val allVulnerabilities = engine.getVulnerabilities()
+                val vulnerabilities = engine.confirmVulnerabilities(
+                    setOf(ep), allVulnerabilities,
+                    timeout = 1.minutes, cancellationTimeout = 10.seconds
+                )
                 val traces = engine.resolveVulnerabilityTraces(
                     setOf(ep), vulnerabilities,
                     resolverParams = TraceResolver.Params(),
@@ -128,6 +131,6 @@ class TestAnalysisRunner(
             taintConfig.loadConfig(defaultPassRules)
         }
 
-        return JIRTaintRulesProvider(taintConfig).applyAnalysisEndSinksForEntryPoints(ep)
+        return JIRTaintRulesProvider(taintConfig)
     }
 }

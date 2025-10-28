@@ -1,7 +1,13 @@
 package org.seqra.semgrep.util
 
 import base.RuleSample
+import org.seqra.dataflow.configuration.jvm.serialized.SerializedItem
+import org.seqra.dataflow.configuration.jvm.serialized.SerializedTaintAssignAction
+import org.seqra.dataflow.configuration.jvm.serialized.SerializedTaintConfig
 import org.seqra.dataflow.configuration.jvm.serialized.SinkMetaData
+import org.seqra.dataflow.configuration.jvm.serialized.SinkRule
+import org.seqra.dataflow.configuration.jvm.serialized.SourceRule
+import org.seqra.org.seqra.semgrep.pattern.Mark
 import org.seqra.semgrep.pattern.SemgrepRuleLoadTrace
 import org.seqra.semgrep.pattern.SemgrepTraceEntry
 import org.seqra.semgrep.pattern.conversion.SemgrepRuleAutomataBuilder
@@ -12,14 +18,21 @@ import kotlin.io.path.Path
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import kotlin.test.fail
 
 abstract class SampleBasedTest(
     private val configurationRequired: Boolean = false
 ) {
-    inline fun <reified T : RuleSample> runTest() =
-        runClassTest(getFullyQualifiedClassName<T>())
+    inline fun <reified T : RuleSample> runTest(
+        expectStateVar: Boolean = false,
+        noinline provideAdditionalRules: (SerializedTaintConfig) -> SerializedTaintConfig = { it }
+    ) = runClassTest(getFullyQualifiedClassName<T>(), expectStateVar, provideAdditionalRules)
 
-    fun runClassTest(sampleClassName: String) {
+    fun runClassTest(
+        sampleClassName: String,
+        expectStateVar: Boolean,
+        provideAdditionalRules: (SerializedTaintConfig) -> SerializedTaintConfig
+    ) {
         val data = sampleData[sampleClassName] ?: error("No sample data for $sampleClassName")
 
         val ruleYaml = parseSemgrepYaml(data.rule)
@@ -39,6 +52,15 @@ abstract class SampleBasedTest(
 
         val taintConfig = rules.createTaintConfig()
 
+        val stateVarExists = doesCreateStateVar(taintConfig, rule.id)
+        if (!expectStateVar && stateVarExists) {
+            fail("Taint config has AssignAction that creates a state var, but `expectStateVar` was set to `false`!")
+        }
+        if (expectStateVar && !stateVarExists) {
+            fail("Taint config does not create any state var, but `expectStateVar` was set to `true`.\n" +
+                    "Consider changing the test or removing the flag.")
+        }
+
         val allSamples = hashSetOf<String>()
         data.positiveClasses.mapTo(allSamples) { it.className }
         data.negativeClasses.mapTo(allSamples) { it.className }
@@ -51,18 +73,25 @@ abstract class SampleBasedTest(
             null
         }
 
-        val results = runner.run(taintConfig, configPath, allSamples)
+        val configWithExtraRules = provideAdditionalRules(taintConfig)
 
+        val results = runner.run(configWithExtraRules, configPath, allSamples)
+
+        val missedPositive = hashSetOf<PositiveCase>()
         for (sample in data.positiveClasses) {
             val vulnerabilities = results[sample.className]
             assertNotNull(vulnerabilities, "No results for ${sample.className}")
 
-            assertTrue(
-                vulnerabilities.isNotEmpty(),
-                "Expected $sample to be positive, but no vulnerability was found."
-            )
+            if (vulnerabilities.isEmpty()) {
+                missedPositive.add(sample)
+            }
         }
+        assertTrue(
+            missedPositive.isEmpty(),
+            "Expected $missedPositive to be positive, but no vulnerability was found."
+        )
 
+        val falseNegative = hashSetOf<NegativeCase>()
         for (sample in data.negativeClasses) {
             val vulnerabilities = results[sample.className]
             assertNotNull(vulnerabilities, "No results for ${sample.className}")
@@ -74,11 +103,32 @@ abstract class SampleBasedTest(
                 continue
             }
 
-            assertTrue(
-                false,
-                "Expected $sample to be negative, but vulnerabilities were found: $vulnerabilities"
-            )
+            falseNegative.add(sample)
         }
+        assertTrue(
+            falseNegative.isEmpty(),
+            "Expected $falseNegative to be negative, but vulnerabilities were found."
+        )
+    }
+
+    private fun List<SerializedItem?>?.getAssigns(): List<SerializedTaintAssignAction> =
+        this?.mapNotNull { rule ->
+            when (rule) {
+                is SourceRule -> rule.taint
+                is SinkRule -> rule.trackFactsReachAnalysisEnd
+                else -> emptyList()
+            }
+        }?.flatten()
+            ?: emptyList()
+
+    private fun doesCreateStateVar(taintConfig: SerializedTaintConfig, ruleId: String): Boolean {
+        val allAssignActions = taintConfig.source.getAssigns() +
+                taintConfig.entryPoint.getAssigns() +
+                taintConfig.staticFieldSource.getAssigns() +
+                taintConfig.methodEntrySink.getAssigns() +
+                taintConfig.methodExitSink.getAssigns() +
+                taintConfig.sink.getAssigns()
+        return allAssignActions.any { Mark.getMarkFromString(it.kind, ruleId) is Mark.StateMark }
     }
 
     private val samplesDb by lazy { samplesDb() }
@@ -97,4 +147,9 @@ abstract class SampleBasedTest(
     } catch (e: NoClassDefFoundError) {
         e.message?.replace('/', '.')
     } ?: error("No class name")
+
+    companion object {
+        @JvmStatic
+        protected val EXPECT_STATE_VAR = true
+    }
 }

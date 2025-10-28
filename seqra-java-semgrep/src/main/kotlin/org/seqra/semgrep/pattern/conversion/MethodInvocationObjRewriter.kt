@@ -1,7 +1,5 @@
 package org.seqra.semgrep.pattern.conversion
 
-import org.seqra.semgrep.pattern.conversion.PatternRewriter
-import org.seqra.semgrep.pattern.conversion.safeRewrite
 import org.seqra.semgrep.pattern.ConcreteName
 import org.seqra.semgrep.pattern.MethodArguments
 import org.seqra.semgrep.pattern.Name
@@ -15,6 +13,9 @@ private const val GeneratedObjMetaVarSuffix = "__"
 
 fun isGeneratedMethodInvocationObjMetaVar(metaVar: String): Boolean =
     metaVar.startsWith(GeneratedObjMetaVarPrefix)
+
+fun mkGeneratedMethodInvocationObjMetaVar(idx: Int): String =
+    "$GeneratedObjMetaVarPrefix${idx}$GeneratedObjMetaVarSuffix"
 
 fun rewriteMethodInvocationObj(rule: NormalizedSemgrepRule): List<NormalizedSemgrepRule> {
     val nameMetaVars = hashMapOf<List<Name>, String>()
@@ -45,7 +46,7 @@ fun rewriteMethodInvocationObj(rule: NormalizedSemgrepRule): List<NormalizedSemg
             }
 
             val freshMetaVar = nameMetaVars.getOrPut(parts) {
-                "$GeneratedObjMetaVarPrefix${nameMetaVars.size}$GeneratedObjMetaVarSuffix"
+                mkGeneratedMethodInvocationObjMetaVar(nameMetaVars.size)
             }
 
             val type = TypeName(parts)

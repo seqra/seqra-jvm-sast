@@ -16,7 +16,7 @@ fun AutomataBuilderCtx.determinize(
     automata: SemgrepRuleAutomata,
     simplifyAutomata: Boolean = false
 ): SemgrepRuleAutomata {
-    if (automata.isDeterministic) {
+    if (automata.params.isDeterministic) {
         return automata
     }
 
@@ -34,6 +34,7 @@ fun AutomataBuilderCtx.determinize(
     }
 
     var hasMethodEnter = false
+    var hasMethodExit = false
     var hasEndEdges = false
 
     val queue = mutableListOf<BitSet>()
@@ -80,14 +81,25 @@ fun AutomataBuilderCtx.determinize(
             hasMethodEnter = true
             AutomataEdgeType.MethodEnter(it)
         }
+
+        determinizeSpecificEdgeType<AutomataEdgeType.MethodExit>(
+            initialEdges, newNode, AutomataNode::nodeId, ::getOrCreateNewNode
+        ) {
+            hasMethodExit = true
+            AutomataEdgeType.MethodExit(it)
+        }
     }
 
-    return SemgrepRuleAutomata(
-        automata.formulaManager,
-        initialNodes = setOf(root),
+    val params = SemgrepRuleAutomata.Params(
         isDeterministic = true,
         hasMethodEnter = hasMethodEnter,
         hasEndEdges = hasEndEdges,
+        hasMethodExit = hasMethodExit,
+    )
+    return SemgrepRuleAutomata(
+        automata.formulaManager,
+        initialNodes = setOf(root),
+        params
     ).also {
         removeDeadNodes(it)
     }
@@ -121,14 +133,15 @@ private inline fun <reified Type : AutomataEdgeType.AutomataEdgeTypeWithFormula>
         edges.toBitSet { it.second.nodeId() }
     }
 
-    for (i in 1..<(1 shl n)) {
+    for (mask in 1..<(1 shl n)) {
         val toSet = BitSet()
         edgeNodeSets.forEachIndexed { index, nodeSet ->
-            val take = (i and (1 shl index)) != 0
-            if (!take) return@forEachIndexed
-            toSet.or(nodeSet)
+            val take = (mask and (1 shl index)) != 0
+            if (take) {
+                toSet.or(nodeSet)
+            }
         }
-        out.getOrPut(toSet, ::mutableListOf).add(i)
+        out.getOrPut(toSet, ::mutableListOf).add(mask)
     }
 
     out.entries.forEach { (toSet, masks) ->

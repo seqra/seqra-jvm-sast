@@ -125,15 +125,17 @@ fun AutomataBuilderCtx.unifyMetavars(automata: SemgrepRuleAutomata): SemgrepRule
         }
 
         if (anyEdgeChanged) {
-            val methodCallToDeadNode = methodCallEdgeToDeadNode(automata, prevNode)
-            if (methodCallToDeadNode != null) {
-                newNode.outEdges.add(methodCallToDeadNode to automata.deadNode)
+            methodCallEdgeToDeadNode(automata, prevNode, keepTrivialEdges = false)?.also {
+                newNode.outEdges.add(it to automata.deadNode)
             }
 
-            if (automata.hasMethodEnter) {
-                val methodEnterToDeadNode = methodEnterEdgeToDeadNode(automata, prevNode)
-                if (methodEnterToDeadNode != null) {
-                    newNode.outEdges.add(methodEnterToDeadNode to automata.deadNode)
+            methodExitEdgeToDeadNode(automata, prevNode, keepTrivialEdges = false)?.also {
+                newNode.outEdges.add(it to automata.deadNode)
+            }
+
+            if (automata.params.hasMethodEnter) {
+                methodEnterEdgeToDeadNode(automata, prevNode, keepTrivialEdges = false)?.also {
+                    newNode.outEdges.add(it to automata.deadNode)
                 }
             }
         }
@@ -142,9 +144,7 @@ fun AutomataBuilderCtx.unifyMetavars(automata: SemgrepRuleAutomata): SemgrepRule
     return SemgrepRuleAutomata(
         formulaManager = automata.formulaManager,
         initialNodes = setOf(newInitialNode),
-        isDeterministic = automata.isDeterministic,
-        hasMethodEnter = automata.hasMethodEnter,
-        hasEndEdges = automata.hasEndEdges
+        automata.params
     )
 }
 
@@ -157,6 +157,8 @@ private fun AutomataBuilderCtx.transformEdge(
     }
 
     val newContext = context.extendByFormula(edge.formula, this)
+        ?: return null
+
     val newFormula = edge.formula.transform(formulaManager, newContext)
 
     if (newFormula == edge.formula && newContext == context) {
@@ -170,7 +172,7 @@ private fun AutomataBuilderCtx.transformEdge(
     val newEdge = when (edge) {
         is AutomataEdgeType.MethodCall -> AutomataEdgeType.MethodCall(newFormula)
         is AutomataEdgeType.MethodEnter -> AutomataEdgeType.MethodEnter(newFormula)
-        is AutomataEdgeType.InitialLoopMethodCall -> AutomataEdgeType.InitialLoopMethodCall(newFormula)
+        is AutomataEdgeType.MethodExit -> AutomataEdgeType.MethodExit(newFormula)
     }
 
     return newEdge to newContext
@@ -239,7 +241,7 @@ private fun Predicate.transform(context: MetavarUnificationContext): Predicate {
 private fun MetavarUnificationContext.extendByFormula(
     formula: MethodFormula,
     automataCtx: AutomataBuilderCtx
-): MetavarUnificationContext {
+): MetavarUnificationContext? {
     val (positive, negative) = formula.getAllPredicates()
     val allMetavars = (positive + negative)
         .map(automataCtx.formulaManager::predicate)
@@ -264,7 +266,7 @@ private fun MetavarUnificationContext.extendByFormula(
 private fun MetavarUnificationContext.extendByFormulaPositivePredicates(
     formula: MethodFormula,
     automataCtx: AutomataBuilderCtx
-): MetavarUnificationContext {
+): MetavarUnificationContext? {
     val cubes = simplifyMethodFormula(automataCtx.formulaManager, formula, automataCtx.metaVarInfo, automataCtx.cancelation)
 
     val cubeContexts = cubes.map {
@@ -272,7 +274,7 @@ private fun MetavarUnificationContext.extendByFormulaPositivePredicates(
         extendByPositivePredicates(positivePredicates, automataCtx)
     }
 
-    return cubeContexts.reduce(MetavarUnificationContext::intersect).also {
+    return cubeContexts.reduceOrNull(MetavarUnificationContext::intersect)?.also {
         check(it.intersect(this) == this) {
             "Resulting context expected to at least contain initial context"
         }
