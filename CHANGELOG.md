@@ -1,3 +1,17 @@
+## 2025.11.08
+### feat: Improve automata, config loading, and analysis handling
+- Fix a bunch of automata generation issues
+- Load default config from resources
+- Handle loop-vars more correctly
+- Better handling for loop-assign vars
+- Publish analyzer jar
+- Try to match taints to path starts
+- Initial support for arrays
+- Generate at least one trace for each entry point
+- Enable alias analysis by default
+- Update rules on CI
+- Annotate all rules with rule-info
+- Fix signature patterns
 ## 2025.10.28
 ### feat: Enhance string concat, add propagators, refactor and fix issues
 - N-ary string concat

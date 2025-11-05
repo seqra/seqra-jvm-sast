@@ -113,8 +113,7 @@ private class MethodFormulaCubeCompactComparator(
 
 private fun MethodFormulaManager.reduceCubes(
     cubes: List<MethodFormulaCubeCompact>,
-    metaVarInfo: ResolvedMetaVarInfo,
-    applyNotEquivalentTransformations: Boolean
+    metaVarInfo: ResolvedMetaVarInfo
 ): List<MethodFormulaCubeCompact> {
     val cmp = MethodFormulaCubeCompactComparator(this)
     val resultCubes = cubes.toMutableList().sortedWith(cmp).toMutableList()
@@ -154,6 +153,25 @@ private fun MethodFormulaManager.reduceCubes(
                     continue
                 }
 
+                /**
+                 * (assert (not (and (not x) Z Y)))             ; (refinedJCube -> False)
+                 *
+                 * (assert (= c1 (or (and x Y) (and Z Y))))     ; rc_i \/ rc_j
+                 * (assert (= c2 (and x Y)))                    ; rc_i
+                 * (assert (not (= c1 c2)))
+                 * UNSAT
+                 *
+                 * rc_i := x /\ Y
+                 * rc_j := Z /\ Y
+                 *
+                 * rc_i \/ rc_j
+                 * ------------- (rewrite)
+                 * (x /\ Y) \/ (Z /\ Y)
+                 * ----------------------- (by x \/ !x)
+                 * (x /\ Y) \/ (x /\ Z /\ Y) \/ (!x /\ Z /\ Y)
+                 *
+                 * refinedJCube := (!x /\ Z /\ Y)
+                 * */
                 val refinedJCube = if (resultCubes[i].negativeLiterals.get(refiningLiteral)) {
                     val newPositive = resultCubes[j].positiveLiterals.copy()
                     newPositive.set(refiningLiteral)
@@ -166,8 +184,15 @@ private fun MethodFormulaManager.reduceCubes(
                     MethodFormulaCubeCompact(resultCubes[j].positiveLiterals.copy(), newNegative)
                 }
 
-                val simplifiedJCube = simplifyMethodFormulaCube(refinedJCube, metaVarInfo, applyNotEquivalentTransformations)
+                val simplifiedJCube = simplifyMethodFormulaCube(refinedJCube, metaVarInfo, applyNotEquivalentTransformations = false)
                 if (simplifiedJCube == null) {
+                    /**
+                     * (x /\ Y) \/ (x /\ Z /\ Y) \/ (!x /\ Z /\ Y)
+                     * ------------------------------------------- (refinedJCube -> False)
+                     * (x /\ Y) \/ (x /\ Z /\ Y)     (x /\ Z /\ Y) -> (x /\ Y)
+                     * -------------------------------------------------------
+                     * (x /\ Y)
+                     * */
                     resultCubes.removeAt(j)
                     foundSimplification = true
                     if (i > j) {
@@ -215,7 +240,7 @@ private fun MethodFormulaManager.formulaSimplifiedCubes(
         .mapNotNull { simplifyMethodFormulaCube(it, metaVarInfo, applyNotEquivalentTransformations) }
         .toMutableList()
 
-    return reduceCubes(cubes, metaVarInfo, applyNotEquivalentTransformations)
+    return reduceCubes(cubes, metaVarInfo)
 }
 
 private fun MethodFormula.tryFindSimplifiedCubes(): List<MethodFormulaCubeCompact>? {
@@ -455,9 +480,10 @@ private class MethodFormulaSolver(
     ) {
         val (posParams, negParams) = solution()
 
-        if (posParams.isEmpty() && negParams.isEmpty()) {
-            result += Lit(Predicate(signature, constraint = null), negated)
-            return
+        if (posParams.isEmpty()) {
+            if (negParams.isEmpty() || !negated) {
+                result += Lit(Predicate(signature, constraint = null), negated)
+            }
         }
 
         posParams.mapTo(result) {
@@ -734,71 +760,97 @@ private fun MethodName.unify(
 private fun MethodEnclosingClassName.unify(
     other: MethodEnclosingClassName,
     metaVarInfo: ResolvedMetaVarInfo,
-): MethodEnclosingClassName? {
-    if (this.name == other.name) return this
+): MethodEnclosingClassName? =
+    unifyTypeName(this.name, other.name, metaVarInfo)
+        ?.let { MethodEnclosingClassName(it) }
 
-    when (this.name) {
-        TypeNamePattern.AnyType -> return other
+private fun unifyTypeName(
+    left: TypeNamePattern,
+    right: TypeNamePattern,
+    metaVarInfo: ResolvedMetaVarInfo
+): TypeNamePattern? {
+    if (left == right) return left
+
+    when (left) {
+        TypeNamePattern.AnyType -> return right
 
         is TypeNamePattern.PrimitiveName -> return null
 
-        is TypeNamePattern.ClassName -> when (other.name) {
-            TypeNamePattern.AnyType -> return this
+        is TypeNamePattern.ClassName -> when (right) {
+            TypeNamePattern.AnyType -> return left
 
+            is TypeNamePattern.ArrayType,
             is TypeNamePattern.ClassName,
             is TypeNamePattern.PrimitiveName -> return null
 
             is TypeNamePattern.FullyQualified -> {
-                if (other.name.name.endsWith(this.name.name)) return other
+                if (right.name.endsWith(left.name)) return right
                 return null
             }
 
             is TypeNamePattern.MetaVar -> {
-                if (!stringMatches(this.name.name, metaVarInfo.metaVarConstraints[other.name.metaVar])) return null
-                return this
+                if (!stringMatches(left.name, metaVarInfo.metaVarConstraints[right.metaVar])) return null
+                return left
             }
         }
 
-        is TypeNamePattern.FullyQualified -> when (other.name) {
-            TypeNamePattern.AnyType -> return this
+        is TypeNamePattern.FullyQualified -> when (right) {
+            TypeNamePattern.AnyType -> return left
 
+            is TypeNamePattern.ArrayType,
             is TypeNamePattern.PrimitiveName -> return null
 
             is TypeNamePattern.ClassName -> {
-                if (this.name.name.endsWith(other.name.name)) return this
+                if (left.name.endsWith(right.name)) return left
                 return null
             }
 
             is TypeNamePattern.FullyQualified -> return null
 
             is TypeNamePattern.MetaVar -> {
-                if (this.name.name == generatedMethodClassName) return null
-                if (!stringMatches(this.name.name, metaVarInfo.metaVarConstraints[other.name.metaVar])) return null
-                return this
+                if (left.name == generatedMethodClassName) return null
+                if (!stringMatches(left.name, metaVarInfo.metaVarConstraints[right.metaVar])) return null
+                return left
             }
         }
 
-        is TypeNamePattern.MetaVar -> when (other.name) {
-            TypeNamePattern.AnyType -> return this
+        is TypeNamePattern.MetaVar -> when (right) {
+            TypeNamePattern.AnyType -> return left
 
+            is TypeNamePattern.ArrayType,
             is TypeNamePattern.PrimitiveName -> return null
 
             is TypeNamePattern.ClassName -> {
-                if (!stringMatches(other.name.name, metaVarInfo.metaVarConstraints[this.name.metaVar])) return null
-                return other
+                if (!stringMatches(right.name, metaVarInfo.metaVarConstraints[left.metaVar])) return null
+                return right
             }
 
             is TypeNamePattern.FullyQualified -> {
-                if (other.name.name == generatedMethodClassName) return null
-                if (!stringMatches(other.name.name, metaVarInfo.metaVarConstraints[this.name.metaVar])) return null
-                return other
+                if (right.name == generatedMethodClassName) return null
+                if (!stringMatches(right.name, metaVarInfo.metaVarConstraints[left.metaVar])) return null
+                return right
             }
 
             is TypeNamePattern.MetaVar -> {
-                val thisConstraints = metaVarInfo.metaVarConstraints[this.name.metaVar] ?: return other
-                val otherConstraints = metaVarInfo.metaVarConstraints[other.name.metaVar] ?: return this
+                val thisConstraints = metaVarInfo.metaVarConstraints[left.metaVar] ?: return right
+                val otherConstraints = metaVarInfo.metaVarConstraints[right.metaVar] ?: return left
                 TODO("Type metavar constraints intersection")
             }
+        }
+
+        is TypeNamePattern.ArrayType -> when (right) {
+            is TypeNamePattern.AnyType -> return left
+
+            is TypeNamePattern.ArrayType -> {
+                val unifiedElement = unifyTypeName(left.element, right.element, metaVarInfo)
+                    ?: return null
+                return TypeNamePattern.ArrayType(unifiedElement)
+            }
+
+            is TypeNamePattern.ClassName,
+            is TypeNamePattern.FullyQualified,
+            is TypeNamePattern.MetaVar,
+            is TypeNamePattern.PrimitiveName -> return null
         }
     }
 }

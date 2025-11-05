@@ -167,8 +167,7 @@ class ExampleTest : SampleBasedTest() {
     fun `test return inside signature 2`() = runTest<example.RuleReturnInsideSignature2>()
 
     @Test
-    @Disabled // todo: incorrect pattern-inside processing
-    fun `test r1`() = runTest<example.R1>()
+    fun `test r1`() = runTest<example.R1>(EXPECT_STATE_VAR)
 
     @Test
     fun `test r2`() = runTest<example.R2>()
@@ -189,6 +188,12 @@ class ExampleTest : SampleBasedTest() {
             val rule = SerializedRule.PassThrough(function, copy = listOf(action))
             cfg.copy(passThrough = cfg.passThrough.orEmpty() + rule)
         }
+
+    @Test
+    fun `test tricky pattern not`() = runTest<example.TrickyPatterNot>(EXPECT_STATE_VAR)
+
+    @Test
+    fun `test array example`() = runTest<example.ArrayExample>()
 
     @AfterAll
     fun close() {

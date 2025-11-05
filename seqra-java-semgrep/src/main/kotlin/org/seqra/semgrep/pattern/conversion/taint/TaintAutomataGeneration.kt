@@ -1,7 +1,9 @@
 package org.seqra.semgrep.pattern.conversion.taint
 
+import kotlinx.collections.immutable.PersistentList
 import kotlinx.collections.immutable.PersistentMap
 import kotlinx.collections.immutable.persistentHashMapOf
+import kotlinx.collections.immutable.persistentListOf
 import org.seqra.dataflow.util.PersistentBitSet
 import org.seqra.dataflow.util.contains
 import org.seqra.dataflow.util.toBitSet
@@ -14,8 +16,8 @@ import org.seqra.semgrep.pattern.conversion.SemgrepPatternAction
 import org.seqra.semgrep.pattern.conversion.TypeNamePattern
 import org.seqra.semgrep.pattern.conversion.automata.AutomataNode
 import org.seqra.semgrep.pattern.conversion.automata.MethodConstraint
-import org.seqra.semgrep.pattern.conversion.automata.MethodSignature
 import org.seqra.semgrep.pattern.conversion.automata.ParamConstraint
+import org.seqra.semgrep.pattern.conversion.automata.Position
 import org.seqra.semgrep.pattern.conversion.automata.Predicate
 import org.seqra.semgrep.pattern.conversion.taint.TaintRegisterStateAutomata.Edge
 import org.seqra.semgrep.pattern.conversion.taint.TaintRegisterStateAutomata.EdgeCondition
@@ -71,6 +73,8 @@ private fun RuleConversionCtx.simulateAutomata(automata: TaintRegisterStateAutom
     val finalDeadStates = hashSetOf<State>()
     val successors = hashMapOf<State, MutableSet<Pair<Edge, State>>>()
 
+    val unprocessedLoopBackEdges = mutableListOf<Triple<State, Edge, State>>()
+
     while (unprocessed.isNotEmpty()) {
         val simulationState = unprocessed.removeLast()
         val state = simulationState.state
@@ -93,8 +97,7 @@ private fun RuleConversionCtx.simulateAutomata(automata: TaintRegisterStateAutom
                     continue
                 }
 
-//                throw LoopAssignVarsException()
-                semgrepRuleTrace.error("Loop var assign", Reason.ERROR)
+                unprocessedLoopBackEdges += Triple(state, simplifiedEdge, loopStartState)
                 continue
             }
 
@@ -111,11 +114,141 @@ private fun RuleConversionCtx.simulateAutomata(automata: TaintRegisterStateAutom
         }
     }
 
-    return TaintRegisterStateAutomata(
+    val result = TaintRegisterStateAutomata(
         automata.formulaManager, automata.initial,
         finalAcceptStates, finalDeadStates,
         successors, automata.nodeIndex
     )
+
+    val resultWithLoopsResolved = resolveLoopBackEdges(result, unprocessedLoopBackEdges)
+    return resultWithLoopsResolved
+}
+
+private fun RuleConversionCtx.resolveLoopBackEdges(
+    automata: TaintRegisterStateAutomata,
+    loopBackEdges: List<Triple<State, Edge, State>>
+): TaintRegisterStateAutomata {
+    if (loopBackEdges.isEmpty()) return automata
+
+    val acceptReachableFromStates = stateReachesAccept(automata)
+
+    val requiredLoops = mutableListOf<Triple<State, Edge, State>>()
+
+    for (loopEdge in loopBackEdges) {
+        val (stateFrom, edge, stateTo) = loopEdge
+
+        if (stateTo !in acceptReachableFromStates) continue
+
+        if (stateFrom !in acceptReachableFromStates) {
+            requiredLoops.add(loopEdge)
+            continue
+        }
+
+        val edgeHasEffect = when (edge) {
+            is Edge.AnalysisEnd -> true
+            is Edge.EdgeWithEffect -> !edge.effect.hasNoEffect()
+        }
+
+        if (edgeHasEffect) {
+            requiredLoops.add(loopEdge)
+            continue
+        }
+
+        if (automata.anyEdgeCanChangeMetaVarPosition(stateTo, stateFrom)) {
+            requiredLoops.add(loopEdge)
+            continue
+        }
+
+        // loop has no effect
+    }
+
+    if (requiredLoops.isEmpty()) return automata
+
+    semgrepRuleTrace.error("Loop var assign", Reason.ERROR)
+    return automata
+}
+
+private fun TaintRegisterStateAutomata.anyEdgeCanChangeMetaVarPosition(
+    startSate: State,
+    dstSate: State
+): Boolean {
+    val allPathsOnLoop = findAllPathsBetweenStates(startSate, dstSate)
+    for (path in allPathsOnLoop) {
+        // todo: handle complex loops
+        if (path.size > 1) {
+            return true
+        }
+
+        val edge = path.firstOrNull()?.second ?: continue
+
+        val edgeCond = when (edge) {
+            is Edge.AnalysisEnd -> continue
+            is Edge.EdgeWithCondition -> edge.condition
+        }
+
+        val edgeEffect = when (edge) {
+            is Edge.EdgeWithEffect -> edge.effect
+        }
+
+        for ((metaVar, reads) in edgeCond.readMetaVar) {
+            val writes = edgeEffect.assignMetaVar[metaVar] ?: continue
+
+            val readPos = hashSetOf<Position>()
+            val writePos = hashSetOf<Position>()
+
+            reads.collectMetaVarPositions(readPos)
+            writes.collectMetaVarPositions(writePos)
+
+            if (writePos.size > 1) return true
+
+            val singleWritePos = writePos.firstOrNull() ?: continue
+            if (singleWritePos !in readPos) return true
+        }
+    }
+    return false
+}
+
+private fun List<MethodPredicate>.collectMetaVarPositions(dst: MutableSet<Position>) =
+    forEach { it.collectMetaVarPositions(dst) }
+
+private fun MethodPredicate.collectMetaVarPositions(dst: MutableSet<Position>) {
+    val c = predicate.constraint as? ParamConstraint ?: return
+    dst.add(c.position)
+}
+
+private fun TaintRegisterStateAutomata.findAllPathsBetweenStates(
+    startSate: State,
+    dstSate: State
+): List<List<Triple<State, Edge, State>>> {
+    val predecessors = automataPredecessors(this)
+
+    data class SearchState(
+        val current: State,
+        val path: PersistentList<Triple<State, Edge, State>>
+    )
+
+    val result = mutableListOf<List<Triple<State, Edge, State>>>()
+
+    val initial = SearchState(dstSate, persistentListOf())
+    val unprocessed = mutableListOf(initial)
+    val visited = hashSetOf<SearchState>()
+
+    while (unprocessed.isNotEmpty()) {
+        val searchState = unprocessed.removeLast()
+        if (!visited.add(searchState)) continue
+
+        if (searchState.current == startSate) {
+            result.add(searchState.path)
+            continue
+        }
+
+        for ((edge, preState) in predecessors[searchState.current].orEmpty()) {
+            val next = SearchState(preState, searchState.path.add(Triple(preState, edge, searchState.current)))
+            unprocessed.add(next)
+        }
+    }
+
+    return result
 }
 
 private fun simulateCondition(
@@ -334,22 +467,17 @@ private fun RuleConversionCtx.removeMeaningLessEdges(
 
 private fun Edge.ensurePositiveCondition(ctx: RuleConversionCtx): Edge? = when (this) {
     is Edge.AnalysisEnd -> this
-    is Edge.MethodCall -> condition.ensurePositiveCondition(ctx)?.let { copy(condition = it) }
-    is Edge.MethodEnter -> condition.ensurePositiveCondition(ctx)?.let { copy(condition = it) }
-    is Edge.MethodExit -> condition.ensurePositiveCondition(ctx)?.let { copy(condition = it) }
+    is Edge.MethodCall -> condition.ensurePositiveCondition(ctx, this)?.let { copy(condition = it) }
+    is Edge.MethodEnter -> condition.ensurePositiveCondition(ctx, this)?.let { copy(condition = it) }
+    is Edge.MethodExit -> condition.ensurePositiveCondition(ctx, this)?.let { copy(condition = it) }
 }
 
-private fun EdgeCondition.ensurePositiveCondition(ctx: RuleConversionCtx): EdgeCondition? {
+private fun EdgeCondition.ensurePositiveCondition(ctx: RuleConversionCtx, edge: Edge): EdgeCondition? {
     if (containsPositivePredicate()) return this
 
-    val signatures = hashSetOf<MethodSignature>()
-    other.mapTo(signatures) { it.predicate.signature }
-    readMetaVar.values.forEach { predicates -> predicates.mapTo(signatures) { it.predicate.signature } }
-
-    if (signatures.size == 1) {
-        // !f(a) /\ !f(b) -> f(*) /\ !f(a) /\ !f(b)
-        val commonSignature = signatures.single()
-        val positivePredicate = Predicate(commonSignature, constraint = null)
+    if (edge is Edge.MethodEnter) {
+        // todo: remove this tricky hack
+        val positivePredicate = Predicate(anyMethodSignature(), constraint = null)
         val otherPredicates = other + MethodPredicate(positivePredicate, negated = false)
         return copy(other = otherPredicates)
     }
@@ -365,30 +493,17 @@ private fun EdgeCondition.ensurePositiveCondition(ctx: RuleConversionCtx): EdgeC
 private fun removeUnreachableStates(
     automata: TaintRegisterStateAutomata
 ): TaintRegisterStateAutomata {
-    val predecessors = automataPredecessors(automata)
-
-    val reachableStates = hashSetOf<State>()
-    val unprocessed = automata.finalAcceptStates.toMutableList()
-
-    while (unprocessed.isNotEmpty()) {
-        val stateId = unprocessed.removeLast()
-        if (!reachableStates.add(stateId)) continue
-
-        val predStates = predecessors[stateId] ?: continue
-        for ((_, predState) in predStates) {
-            unprocessed.add(predState)
-        }
-    }
+    val reachableStates = stateReachesAccept(automata)
 
     check(automata.initial in reachableStates) {
         "Initial state is unreachable"
     }
 
     var cleanerStateReachable = false
-    val cleanerState =
-        State(AutomataNode(), StateRegister(emptyMap()))
+    val cleanerState = State(AutomataNode(), StateRegister(emptyMap()))
     val reachableSuccessors = hashMapOf<State, MutableSet<Pair<Edge, State>>>()
 
+    val unprocessed = mutableListOf<State>()
     unprocessed.add(automata.initial)
     while (unprocessed.isNotEmpty()) {
         val state = unprocessed.removeLast()
@@ -427,6 +542,24 @@ private fun removeUnreachableStates(
         automata.finalAcceptStates, finalDeadNodes,
         reachableSuccessors, nodeIndex
     )
+}
+
+private fun stateReachesAccept(automata: TaintRegisterStateAutomata): Set<State> {
+    val predecessors = automataPredecessors(automata)
+
+    val reachableStates = hashSetOf<State>()
+    val unprocessed = automata.finalAcceptStates.toMutableList()
+
+    while (unprocessed.isNotEmpty()) {
+        val stateId = unprocessed.removeLast()
+        if (!reachableStates.add(stateId)) continue
+
+        val predStates = predecessors[stateId] ?: continue
+        for ((_, predState) in predStates) {
+            unprocessed.add(predState)
+        }
+    }
+    return reachableStates
 }
 
 private fun eliminateDeadVariables(
@@ -685,6 +818,7 @@ private fun EdgeCondition.isDummyCondition(metaVarInfo: ResolvedMetaVarInfo): Bo
                     return false
                 }
             }
+            is TypeNamePattern.ArrayType,
             is TypeNamePattern.ClassName,
             is TypeNamePattern.FullyQualified,
             is TypeNamePattern.PrimitiveName -> return false

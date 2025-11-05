@@ -54,24 +54,6 @@ val projectAnalyzerJar = tasks.register<ShadowJar>("projectAnalyzerJar") {
     jarWithDependencies("seqra-project-analyzer", "org.seqra.jvm.sast.runner.ProjectAnalyzerRunner")
 }
 
-val encryptedConfig = tasks.register<JavaExec>("encryptedConfig") {
-    mainClass.set("org.seqra.jvm.sast.util.ConfigUtils")
-    classpath = sourceSets.test.get().runtimeClasspath
-
-    val configFile = layout.projectDirectory.file("config/config.yaml")
-
-    doLast {
-        check(configFile.asFile.exists()) { "Configuration file not found" }
-    }
-
-    inputs.file(configFile.asFile)
-
-    val result = layout.buildDirectory.file("cfg.enc").get().asFile
-    args(configFile.asFile.absolutePath, result.absolutePath)
-
-    outputs.file(result)
-}
-
 tasks.register<JavaExec>("runProjectAnalyzer") {
     configureAnalyzer(
         analyzerRunnerClassName = "org.seqra.jvm.sast.runner.ProjectAnalyzerRunner"
@@ -79,8 +61,6 @@ tasks.register<JavaExec>("runProjectAnalyzer") {
 }
 
 fun JavaExec.configureAnalyzer(analyzerRunnerClassName: String) {
-    dependsOn(encryptedConfig)
-
     mainClass.set(analyzerRunnerClassName)
     classpath = sourceSets.main.get().runtimeClasspath
 
@@ -108,7 +88,7 @@ tasks.register("buildProjectAnalyzerDocker") {
 fun Task.analyzerDockerImage(
     nameSuffix: String,
     analyzerJarProvider: () -> File,
-) = dependsOn(encryptedConfig)
+) = this
     .apply { ensureSeEnvInitialized() }
     .doLast {
         val analyzerJar = analyzerJarProvider()
@@ -163,11 +143,18 @@ fun ShadowJar.jarWithDependencies(name: String, mainClass: String) {
     with(tasks.jar.get() as CopySpec)
 }
 
+tasks.withType<ProcessResources> {
+    val configFile = layout.projectDirectory.file("config/config.yaml")
+
+    doLast {
+        check(configFile.asFile.exists()) { "Configuration file not found" }
+    }
+
+    from(configFile)
+}
+
 fun analyzerEnvironment(): Map<String, Any> {
     val analyzerEnv = mutableMapOf<String, Any>()
-
-    val configFile = encryptedConfig.get().outputs.files.singleFile
-    analyzerEnv["seqra_taint_config_path"] = configFile
 
     val analyzerVersion = project.findProperty("analyzerVersion") ?: "latest"
     analyzerEnv["SARIF_ORGANIZATION"] = "Seqra"
