@@ -1,3 +1,11 @@
+## 2025.11.12
+### feat: Improve rules loading, add controller path resolving, and fix SARIF generation
+- Safe load for semgrep yaml rules
+- Fix exit sink bases
+- Fix controller name
+- Fix recursion in sarif traits
+- Add spring controller info
+- Don't reset heap alias on calls without heap access
 ## 2025.11.08
 ### feat: Improve automata, config loading, and analysis handling
 - Fix a bunch of automata generation issues

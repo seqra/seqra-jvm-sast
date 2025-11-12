@@ -10,8 +10,6 @@ import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.encodeToStream
 import mu.KLogging
-import org.seqra.ir.api.common.CommonMethod
-import org.seqra.ir.api.common.cfg.CommonInst
 import org.seqra.dataflow.ap.ifds.taint.TaintSinkTracker
 import org.seqra.dataflow.ap.ifds.trace.MethodTraceResolver
 import org.seqra.dataflow.ap.ifds.trace.TraceResolver
@@ -19,8 +17,11 @@ import org.seqra.dataflow.ap.ifds.trace.VulnerabilityWithTrace
 import org.seqra.dataflow.configuration.CommonTaintConfigurationSinkMeta.Severity
 import org.seqra.dataflow.sarif.SourceFileResolver
 import org.seqra.dataflow.util.SarifTraits
+import org.seqra.ir.api.common.CommonMethod
+import org.seqra.ir.api.common.cfg.CommonInst
 import org.seqra.ir.api.jvm.JIRMethod
 import org.seqra.ir.api.jvm.cfg.JIRRawLineNumberInst
+import org.seqra.jvm.sast.project.annotateSarifWithSpringRelatedInformation
 import org.seqra.semgrep.pattern.RuleMetadata
 import java.io.OutputStream
 
@@ -76,13 +77,17 @@ class SarifGenerator(
 
         val codeFlow = generateCodeFlow(trace, vulnerabilityRule.meta.message, ruleId)
 
-        return Result(
+        var result = Result(
             ruleID = ruleId,
             message = ruleMessage,
             level = level,
             locations = listOfNotNull(sinkLocation),
             codeFlows = listOfNotNull(codeFlow)
         )
+        result = annotateSarifWithSpringRelatedInformation(result, vulnerability, trace) { s ->
+            statementLocation(s)
+        }
+        return result
     }
 
     private fun generateCodeFlow(trace: TraceResolver.Trace?, sinkMessage: String, ruleId: String): CodeFlow? {

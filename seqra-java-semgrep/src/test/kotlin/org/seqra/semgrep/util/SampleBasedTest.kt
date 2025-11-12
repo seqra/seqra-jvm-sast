@@ -8,7 +8,7 @@ import org.seqra.dataflow.configuration.jvm.serialized.SinkMetaData
 import org.seqra.dataflow.configuration.jvm.serialized.SinkRule
 import org.seqra.dataflow.configuration.jvm.serialized.SourceRule
 import org.seqra.org.seqra.semgrep.pattern.Mark
-import org.seqra.semgrep.pattern.SemgrepRuleLoadTrace
+import org.seqra.semgrep.pattern.SemgrepFileLoadTrace
 import org.seqra.semgrep.pattern.SemgrepTraceEntry
 import org.seqra.semgrep.pattern.conversion.SemgrepRuleAutomataBuilder
 import org.seqra.semgrep.pattern.conversion.taint.convertToTaintRules
@@ -35,11 +35,12 @@ abstract class SampleBasedTest(
     ) {
         val data = sampleData[sampleClassName] ?: error("No sample data for $sampleClassName")
 
-        val ruleYaml = parseSemgrepYaml(data.rule)
-        val rule = ruleYaml.rules.singleOrNull() ?: error("Not a single rule for ${data.rulePath}")
+        val trace = SemgrepFileLoadTrace(data.rulePath)
+        val ruleYaml = parseSemgrepYaml(data.rule, trace)
+        val rule = ruleYaml?.rules?.singleOrNull() ?: error("Not a single rule for ${data.rulePath}")
         check(rule.languages.contains("java"))
 
-        val semgrepRuleTrace = SemgrepRuleLoadTrace(rule.id, rule.id,)
+        val semgrepRuleTrace = trace.ruleTrace(rule.id, rule.id)
         val builder = SemgrepRuleAutomataBuilder()
         val ruleAutomata = builder.build(rule, semgrepRuleTrace)
         assertFalse(builder.stats.isFailure, "Could not convert rule to Automata: ${builder.stats}")
