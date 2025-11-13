@@ -1,6 +1,8 @@
 package org.seqra.semgrep.pattern.conversion.taint
 
 import org.seqra.dataflow.configuration.jvm.serialized.PositionBase
+import org.seqra.dataflow.configuration.jvm.serialized.PositionBaseWithModifiers
+import org.seqra.dataflow.configuration.jvm.serialized.SerializedCondition
 import org.seqra.org.seqra.semgrep.pattern.Mark
 import org.seqra.semgrep.pattern.MetaVarConstraints
 import org.seqra.semgrep.pattern.conversion.MetavarAtom
@@ -56,13 +58,34 @@ open class TaintRuleGenerationCtx(
         result
     }
 
-    open fun allMarkValues(varName: MetavarAtom): List<String> {
+    private fun allMarkValues(varName: MetavarAtom): List<String> {
         val varValues = metaVarValues[varName] ?: error("MetaVar is not assigned")
         return varValues.map { stateMarkName(varName, it) }
     }
 
+    open fun containsAnyMarkValueCondition(
+        varName: MetavarAtom,
+        position: PositionBaseWithModifiers
+    ): SerializedCondition {
+        val conditions = allMarkValues(varName).map { SerializedCondition.ContainsMark(it, position) }
+        return serializedConditionOr(conditions)
+    }
+
     open fun stateMarkName(varName: MetavarAtom, varValue: Int): String =
         "${uniqueRuleId}${Mark.MarkSeparator}${varName}${Mark.MarkSeparator}$varValue"
+
+    open fun stateAccessedMarks(varName: MetavarAtom, varValue: Int): Set<String> {
+        return setOf(stateMarkName(varName, varValue))
+    }
+
+    open fun containsStateMarkWithValue(
+        varName: MetavarAtom,
+        varValue: Int,
+        position: PositionBaseWithModifiers
+    ): SerializedCondition {
+        val markName = stateMarkName(varName, varValue)
+        return SerializedCondition.ContainsMark(markName, position)
+    }
 
     fun globalStateMarkName(state: TaintRegisterStateAutomata.State): String {
         val stateId = automata.stateId(state)

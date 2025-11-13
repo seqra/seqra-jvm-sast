@@ -1,3 +1,7 @@
+## 2025.11.13
+### fix: Correct spring paths and add complex taint support
+- Fix spring paths
+- Support complex taint requires
 ## 2025.11.12
 ### feat: Improve rules loading, add controller path resolving, and fix SARIF generation
 - Safe load for semgrep yaml rules
