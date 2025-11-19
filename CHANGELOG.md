@@ -1,3 +1,6 @@
+## 2025.11.19
+### feat: Bump version
+- feat: Bump version
 ## 2025.11.13
 ### fix: Correct spring paths and add complex taint support
 - Fix spring paths
