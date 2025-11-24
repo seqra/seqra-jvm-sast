@@ -21,7 +21,7 @@ import org.seqra.ir.api.common.CommonMethod
 import org.seqra.ir.api.common.cfg.CommonInst
 import org.seqra.ir.api.jvm.JIRMethod
 import org.seqra.ir.api.jvm.cfg.JIRRawLineNumberInst
-import org.seqra.jvm.sast.project.annotateSarifWithSpringRelatedInformation
+import org.seqra.jvm.sast.project.spring.annotateSarifWithSpringRelatedInformation
 import org.seqra.semgrep.pattern.RuleMetadata
 import java.io.OutputStream
 

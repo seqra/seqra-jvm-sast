@@ -1,4 +1,4 @@
-package org.seqra.jvm.sast.project
+package org.seqra.jvm.sast.project.spring
 
 import mu.KLogging
 import org.seqra.ir.api.jvm.JIRClassType

@@ -1,3 +1,10 @@
+## 2025.11.24
+### feat: Enhance path reporting, fix trace gen
+- Fix spring controller rules
+- Add inner paths of calls to path reporting
+- Fix trace generation
+- Taint spring controller args
+- Support Spring cross-controller analysis
 ## 2025.11.19
 ### feat: Bump version
 - feat: Bump version

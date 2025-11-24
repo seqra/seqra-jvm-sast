@@ -1,14 +1,4 @@
 passThrough:
-- function:
-    package:
-      pattern: .*
-    class:
-      pattern: .*
-    name:
-      pattern: get.*
-  copy:
-  - from: this
-    to: result
 - function: org.springframework.web.util.HtmlUtils#htmlEscape
   copy:
     - from: arg(0)
@@ -19366,6 +19356,19 @@ passThrough:
     - this
     - .java.util.Iterator#<rule-storage>#java.lang.Object
     to: result
+- function: java.util.Scanner#next
+  signature: () java.lang.String
+  copy:
+  - from:
+    - this
+    - .java.util.Scanner#<rule-storage>#java.lang.Object
+    to: result
+  - from: this
+    to: result
+  - from:
+    - this
+    - .java.util.Iterator#<rule-storage>#java.lang.Object
+    to: result
 - function: java.util.Scanner#reset
   signature: () java.util.Scanner
   copy:
@@ -22989,6 +22992,32 @@ passThrough:
   copy:
   - from: arg(0)
     to: result
+
+- function: org.json.JSONObject#<init>
+  signature: (java.lang.String) void
+  overrides: false
+  copy:
+    - from: arg(0)
+      to: this
+
+- function:
+    package: org.json
+    class: JSONObject
+    name:
+      pattern: get.*
+  copy:
+    - from: this
+      to: result
+
+- function:
+    package: org.json
+    class: JSONObject
+    name:
+      pattern: opt.*
+  copy:
+    - from: this
+      to: result
+
 - function: javax.json.JsonArray#getBoolean
   signature: (int) boolean
   overrides: false
@@ -32347,6 +32376,10 @@ passThrough:
   copy:
   - from: arg(0)
     to: result
+  - from:
+      - arg(0)
+      - .java.lang.String#<serialized-value>#java.lang.Object
+    to: result
 - function: com.fasterxml.jackson.databind.ObjectMapper#readValue
   signature:
     params:
@@ -32369,6 +32402,10 @@ passThrough:
   copy:
   - from: arg(0)
     to: result
+  - from:
+      - arg(0)
+      - .java.lang.String#<serialized-value>#java.lang.Object
+    to: result
 - function: com.fasterxml.jackson.databind.ObjectMapper#readValue
   signature:
     params:
@@ -32380,6 +32417,10 @@ passThrough:
   copy:
   - from: arg(0)
     to: result
+  - from:
+      - arg(0)
+      - .java.lang.String#<serialized-value>#java.lang.Object
+    to: result
 - function: com.fasterxml.jackson.databind.ObjectMapper#readValue
   signature:
     params:
@@ -32387,6 +32428,10 @@ passThrough:
       type: java.lang.String
   copy:
   - from: arg(0)
+    to: result
+  - from:
+      - arg(0)
+      - .java.lang.String#<serialized-value>#java.lang.Object
     to: result
 - function: com.fasterxml.jackson.databind.ObjectMapper#readValues
   signature:
@@ -32396,6 +32441,12 @@ passThrough:
   copy:
   - from: arg(0)
     to: result
+  - from:
+      - arg(0)
+      - .java.lang.String#<serialized-value>#java.lang.Object
+    to:
+      - result
+      - .java.lang.Object#Element#java.lang.Object
 - function: com.fasterxml.jackson.databind.ObjectMapper#readValues
   signature:
     params:
@@ -32404,6 +32455,12 @@ passThrough:
   copy:
   - from: arg(0)
     to: result
+  - from:
+      - arg(0)
+      - .java.lang.String#<serialized-value>#java.lang.Object
+    to:
+      - result
+      - .java.lang.Object#Element#java.lang.Object
 - function: com.fasterxml.jackson.databind.ObjectMapper#readValues
   signature:
     params:
@@ -32418,6 +32475,12 @@ passThrough:
   copy:
   - from: arg(0)
     to: result
+  - from:
+      - arg(0)
+      - .java.lang.String#<serialized-value>#java.lang.Object
+    to:
+      - result
+      - .java.lang.Object#Element#java.lang.Object
 - function: com.fasterxml.jackson.databind.ObjectMapper#readValues
   signature:
     params:
@@ -32429,6 +32492,12 @@ passThrough:
   copy:
   - from: arg(0)
     to: result
+  - from:
+      - arg(0)
+      - .java.lang.String#<serialized-value>#java.lang.Object
+    to:
+      - result
+      - .java.lang.Object#Element#java.lang.Object
 - function: com.fasterxml.jackson.databind.ObjectMapper#readValues
   signature:
     params:
@@ -32437,6 +32506,12 @@ passThrough:
   copy:
   - from: arg(0)
     to: result
+  - from:
+      - arg(0)
+      - .java.lang.String#<serialized-value>#java.lang.Object
+    to:
+      - result
+      - .java.lang.Object#Element#java.lang.Object
 - function: com.fasterxml.jackson.databind.ObjectMapper#treeAsTokens
   copy:
   - from: arg(0)
@@ -32526,6 +32601,10 @@ passThrough:
   copy:
   - from: arg(0)
     to: result
+  - from:
+      - arg(0)
+      - .java.lang.String#<serialized-value>#java.lang.Object
+    to: result
 - function: com.fasterxml.jackson.databind.ObjectReader#readValue
   signature:
     params:
@@ -32533,6 +32612,10 @@ passThrough:
       type: com.fasterxml.jackson.core.JsonParser
   copy:
   - from: arg(0)
+    to: result
+  - from:
+      - arg(0)
+      - .java.lang.String#<serialized-value>#java.lang.Object
     to: result
 - function: com.fasterxml.jackson.databind.ObjectReader#readValue
   signature:
@@ -32548,6 +32631,10 @@ passThrough:
   copy:
   - from: arg(0)
     to: result
+  - from:
+      - arg(0)
+      - .java.lang.String#<serialized-value>#java.lang.Object
+    to: result
 - function: com.fasterxml.jackson.databind.ObjectReader#readValue
   signature:
     params:
@@ -32558,6 +32645,10 @@ passThrough:
     pos: arg(0)
   copy:
   - from: arg(0)
+    to: result
+  - from:
+      - arg(0)
+      - .java.lang.String#<serialized-value>#java.lang.Object
     to: result
 - function: com.fasterxml.jackson.databind.ObjectReader#readValue
   signature:
@@ -32575,6 +32666,12 @@ passThrough:
   copy:
   - from: arg(0)
     to: result
+  - from:
+      - arg(0)
+      - .java.lang.String#<serialized-value>#java.lang.Object
+    to:
+      - result
+      - .java.lang.Object#Element#java.lang.Object
 - function: com.fasterxml.jackson.databind.ObjectReader#readValues
   signature:
     params:
@@ -61768,6 +61865,17 @@ passThrough:
     to: result
   - from: arg(4)
     to: result
+
+- function: org.thymeleaf.TemplateSpec#<init>
+  copy:
+    - from: arg(0)
+      to: this
+
+- function: org.thymeleaf.TemplateSpec#getTemplate
+  copy:
+    - from: this
+      to: result
+
 - function: org.apache.velocity.Template#merge
   copy:
   - from: arg(0)

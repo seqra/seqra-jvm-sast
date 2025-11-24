@@ -1,6 +1,8 @@
 package org.seqra.org.seqra.semgrep.pattern
 
 import mu.KLogging
+import org.seqra.dataflow.ap.ifds.TaintMarkAccessor
+import org.seqra.dataflow.ap.ifds.access.InitialFactAp
 
 sealed interface Mark {
     data class StringMark(val mark: String) : Mark
@@ -26,6 +28,7 @@ sealed interface Mark {
         const val GeneralTaintName = "taint"
         const val GeneralTaintLabelPrefix = "taint_"
         const val MarkSeparator = '|'
+        const val SquishedSeparator = '&'
 
         val logger = object : KLogging() {}.logger
 
@@ -52,7 +55,18 @@ sealed interface Mark {
                 logger.error { "mark must contain at least two parts!" }
                 return TaintMark
             }
-            return StringMark(split[1])
+            return StringMark(split[1].split(SquishedSeparator).joinToString(" or "))
+        }
+
+        fun InitialFactAp.getMark(ruleId: String): Mark {
+            val taintMarks = getAllAccessors().filterIsInstance<TaintMarkAccessor>()
+            if (taintMarks.size != 1) {
+                logger.error { "Expected exactly one taint mark but got ${taintMarks.size}!" }
+            }
+            if (taintMarks.isEmpty()) {
+                return TaintMark
+            }
+            return getMarkFromString(taintMarks.first().mark, ruleId)
         }
     }
 }

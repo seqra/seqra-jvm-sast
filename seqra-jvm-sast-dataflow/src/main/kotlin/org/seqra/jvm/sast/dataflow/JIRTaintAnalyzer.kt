@@ -2,19 +2,24 @@ package org.seqra.jvm.sast.dataflow
 
 import kotlinx.coroutines.runBlocking
 import mu.KLogging
+import org.seqra.dataflow.ap.ifds.Accessor
+import org.seqra.dataflow.ap.ifds.AnyAccessor
+import org.seqra.dataflow.ap.ifds.ElementAccessor
+import org.seqra.dataflow.ap.ifds.FieldAccessor
+import org.seqra.dataflow.ap.ifds.FinalAccessor
 import org.seqra.dataflow.ap.ifds.MethodEntryPoint
 import org.seqra.dataflow.ap.ifds.TaintAnalysisUnitRunnerManager
+import org.seqra.dataflow.ap.ifds.TaintMarkAccessor
+import org.seqra.dataflow.ap.ifds.access.AnyAccessorUnrollStrategy
 import org.seqra.dataflow.ap.ifds.access.ApMode
 import org.seqra.dataflow.ap.ifds.access.FinalFactAp
+import org.seqra.dataflow.ap.ifds.access.automata.AutomataApManager
+import org.seqra.dataflow.ap.ifds.access.cactus.CactusApManager
+import org.seqra.dataflow.ap.ifds.access.tree.TreeApManager
 import org.seqra.dataflow.ap.ifds.serialization.SummarySerializationContext
 import org.seqra.dataflow.ap.ifds.taint.TaintSinkTracker
 import org.seqra.dataflow.ap.ifds.trace.TraceResolver
 import org.seqra.dataflow.ap.ifds.trace.VulnerabilityWithTrace
-import org.seqra.dataflow.configuration.jvm.Argument
-import org.seqra.dataflow.configuration.jvm.ConstantTrue
-import org.seqra.dataflow.configuration.jvm.CopyAllMarks
-import org.seqra.dataflow.configuration.jvm.Result
-import org.seqra.dataflow.configuration.jvm.TaintPassThrough
 import org.seqra.dataflow.configuration.jvm.TaintSinkMeta
 import org.seqra.dataflow.ifds.UnitResolver
 import org.seqra.dataflow.ifds.UnitType
@@ -71,6 +76,24 @@ class JIRTaintAnalyzer(
         return analyzeTaintWithIfdsEngine(entryPoints)
     }
 
+    private object UnrollStrategy : AnyAccessorUnrollStrategy {
+        override fun unrollAccessor(accessor: Accessor): Boolean = when (accessor) {
+            is ElementAccessor -> true
+            is FieldAccessor -> accessor.fieldName != "<rule-storage>"
+            is AnyAccessor,
+            is FinalAccessor,
+            is TaintMarkAccessor -> false
+        }
+    }
+
+    private val apManager by lazy {
+        when (ifdsApMode) {
+            ApMode.Tree -> TreeApManager(UnrollStrategy)
+            ApMode.Cactus -> CactusApManager(UnrollStrategy)
+            ApMode.Automata -> AutomataApManager(UnrollStrategy)
+        }
+    }
+
     @Suppress("UNCHECKED_CAST")
     private fun createIfdsEngine() = TaintAnalysisUnitRunnerManager(
         JIRAnalysisManager(cp),
@@ -78,7 +101,7 @@ class JIRTaintAnalyzer(
         analysisUnit as UnitResolver<CommonMethod>,
         taintConfig,
         summarySerializationContext,
-        ifdsApMode,
+        apManager,
         debugOptions.taintRulesStatsSamplingPeriod
     )
 
@@ -165,36 +188,6 @@ class JIRTaintAnalyzer(
 
     private val taintConfig: TaintRulesProvider by lazy {
         StringConcatRuleProvider(taintConfiguration)
-    }
-
-    private class StringConcatRuleProvider(private val base: TaintRulesProvider) : TaintRulesProvider by base {
-        private var stringConcatPassThrough: TaintPassThrough? = null
-
-        private fun stringConcatPassThrough(method: JIRMethod): TaintPassThrough =
-            stringConcatPassThrough ?: generateRule(method).also { stringConcatPassThrough = it }
-
-        private fun generateRule(method: JIRMethod): TaintPassThrough {
-            // todo: string concat hack
-            val possibleArgs = (0..20).map { Argument(it) }
-
-            return TaintPassThrough(
-                method = method,
-                condition = ConstantTrue,
-                actionsAfter = possibleArgs.map { CopyAllMarks(from = it, to = Result) },
-                info = null
-            )
-        }
-
-        override fun passTroughRulesForMethod(method: CommonMethod, statement: CommonInst): Iterable<TaintPassThrough> {
-            check(method is JIRMethod) { "Expected method to be JIRMethod" }
-            val baseRules = base.passTroughRulesForMethod(method, statement)
-
-            if (method.name == "makeConcatWithConstants" && method.enclosingClass.name == "java.lang.invoke.StringConcatFactory") {
-                return (sequenceOf(stringConcatPassThrough(method)) + baseRules).asIterable()
-            }
-
-            return baseRules
-        }
     }
 
     private fun TaintAnalysisUnitRunnerManager.reportCoverage() = buildString {

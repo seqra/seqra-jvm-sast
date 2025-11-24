@@ -18,10 +18,13 @@ import org.seqra.ir.api.jvm.JIRClasspath
 import org.seqra.ir.api.jvm.JIRMethod
 import org.seqra.jvm.sast.JIRSourceFileResolver
 import org.seqra.jvm.sast.dataflow.JIRCombinedTaintRulesProvider
+import org.seqra.jvm.sast.dataflow.JIRMethodExitRuleProvider
+import org.seqra.jvm.sast.dataflow.JIRMethodGetDefaultProvider
 import org.seqra.jvm.sast.dataflow.JIRTaintAnalyzer
 import org.seqra.jvm.sast.dataflow.JIRTaintAnalyzer.DebugOptions
 import org.seqra.jvm.sast.dataflow.JIRTaintRulesProvider
 import org.seqra.jvm.sast.dataflow.rules.TaintConfiguration
+import org.seqra.jvm.sast.project.spring.SpringRuleProvider
 import org.seqra.jvm.sast.sarif.DebugFactReachabilitySarifGenerator
 import org.seqra.jvm.sast.sarif.SarifGenerator
 import org.seqra.jvm.sast.se.api.SastSeAnalyzer
@@ -176,8 +179,15 @@ class ProjectAnalyzer(
     private fun ProjectAnalysisContext.runAnalyzer(entryPoints: List<JIRMethod>) {
         val summarySerializationContext = JIRSummarySerializationContext(cp)
 
+        var config = loadTaintConfig(cp)
+        config = JIRMethodExitRuleProvider(config)
+        config = JIRMethodGetDefaultProvider(config, projectClasses.projectLocations)
+        if (springWebProjectContext != null) {
+            config = SpringRuleProvider(config, springWebProjectContext)
+        }
+
         JIRTaintAnalyzer(
-            cp, loadTaintConfig(cp),
+            cp, config,
             projectLocations = projectClasses.projectLocations,
             ifdsTimeout = ifdsAnalysisTimeout,
             ifdsApMode = ifdsApMode,

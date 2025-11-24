@@ -2,7 +2,8 @@ package org.seqra.semgrep.util
 
 import kotlinx.coroutines.runBlocking
 import org.seqra.dataflow.ap.ifds.TaintAnalysisUnitRunnerManager
-import org.seqra.dataflow.ap.ifds.access.ApMode
+import org.seqra.dataflow.ap.ifds.access.AnyAccessorUnrollStrategy
+import org.seqra.dataflow.ap.ifds.access.tree.TreeApManager
 import org.seqra.dataflow.ap.ifds.trace.TraceResolver
 import org.seqra.dataflow.ap.ifds.trace.VulnerabilityWithTrace
 import org.seqra.dataflow.configuration.jvm.serialized.SerializedTaintConfig
@@ -26,6 +27,7 @@ import org.seqra.ir.impl.features.usagesExt
 import org.seqra.ir.util.io.inputStream
 import org.seqra.jvm.graph.JApplicationGraphImpl
 import org.seqra.jvm.sast.dataflow.DummySerializationContext
+import org.seqra.jvm.sast.dataflow.JIRMethodExitRuleProvider
 import org.seqra.jvm.sast.dataflow.JIRTaintRulesProvider
 import org.seqra.jvm.sast.dataflow.rules.TaintConfiguration
 import org.seqra.jvm.transformer.JMultiDimArrayAllocationTransformer
@@ -76,7 +78,7 @@ class TestAnalysisRunner(
             unitResolver = JIRUnitResolver {
                 if (it.enclosingClass.declaration.location.isRuntime) UnknownUnit else SingletonUnit
             } as UnitResolver<CommonMethod>,
-            apMode = ApMode.Tree,
+            apManager = TreeApManager(anyAccessorUnrollStrategy = AnyAccessorUnrollStrategy.AnyAccessorDisabled),
             summarySerializationContext = DummySerializationContext,
             taintConfig = configProvider,
             taintRulesStatsSamplingPeriod = null,
@@ -131,6 +133,8 @@ class TestAnalysisRunner(
             taintConfig.loadConfig(defaultPassRules)
         }
 
-        return JIRTaintRulesProvider(taintConfig)
+        var cfg: TaintRulesProvider = JIRTaintRulesProvider(taintConfig)
+        cfg = JIRMethodExitRuleProvider(cfg)
+        return cfg
     }
 }
