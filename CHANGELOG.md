@@ -1,4 +1,7 @@
 ## 2025.11.27
+### fix: Resolve cfg performance issues
+- Fix cfg performance issues
+## 2025.11.27
 ### feat: Rewrite rule composition and avoid split on metavar constraints
 - Rewrite rule composition
 - Avoid split on metavar constraints

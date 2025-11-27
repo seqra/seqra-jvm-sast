@@ -8,10 +8,13 @@ import org.seqra.dataflow.jvm.ap.ifds.LambdaAnonymousClassFeature
 import org.seqra.dataflow.jvm.ap.ifds.LambdaExpressionToAnonymousClassTransformerFeature
 import org.seqra.ir.api.jvm.JIRClasspath
 import org.seqra.ir.api.jvm.JIRDatabase
+import org.seqra.ir.api.jvm.JIRSettings
+import org.seqra.ir.api.jvm.ext.JAVA_OBJECT
 import org.seqra.ir.approximation.Approximations
 import org.seqra.ir.impl.JIRRamErsSettings
 import org.seqra.ir.impl.features.InMemoryHierarchy
 import org.seqra.ir.impl.features.Usages
+import org.seqra.ir.impl.features.classpaths.JIRUnknownClass
 import org.seqra.ir.impl.features.classpaths.UnknownClasses
 import org.seqra.ir.impl.seqraIrDb
 import org.seqra.jvm.sast.project.spring.SpringWebProjectContext
@@ -55,7 +58,7 @@ fun initializeProjectAnalysisContext(
         allCpFiles.addAll(projectModulesFiles.keys)
         allCpFiles.addAll(dependencyFiles)
 
-        db = seqraIrDb {
+        val settings = JIRSettings().apply {
             val toolchain = project.javaToolchain
             if (toolchain != null) {
                 useJavaRuntime(toolchain.toFile())
@@ -78,6 +81,8 @@ fun initializeProjectAnalysisContext(
 
             loadByteCode(allCpFiles)
         }
+
+        db = seqraIrDb(settings)
 
         db.awaitBackgroundJobs()
 
@@ -103,6 +108,8 @@ fun initializeProjectAnalysisContext(
             }
 //        cp = db.classpath(allCpFiles, features)
 
+        cp.validate(settings)
+
         projectClasses = ProjectClasses(cp, projectPackage, projectModulesFiles)
         projectClasses.loadProjectClasses()
 
@@ -120,6 +127,13 @@ fun initializeProjectAnalysisContext(
         project, projectPackage, projectKind,
         db, cp, projectClasses, springContext
     )
+}
+
+private fun JIRClasspath.validate(settings: JIRSettings) {
+    val objectCls = findClassOrNull(JAVA_OBJECT)
+    if (objectCls == null || objectCls is JIRUnknownClass) {
+        logger.error { "Invalid JDK ${settings.jre}. Analysis result may be incorrect" }
+    }
 }
 
 class ProjectAnalysisContext(
