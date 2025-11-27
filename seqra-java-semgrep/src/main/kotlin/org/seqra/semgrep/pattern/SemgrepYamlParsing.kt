@@ -309,13 +309,6 @@ fun parseSemgrepYaml(yml: String, trace: SemgrepFileLoadTrace): SemgrepYamlRuleS
         currentLoadTrace = null
     }
 
-fun yamlToSemgrepRule(yml: String, trace: SemgrepFileLoadTrace): List<SemgrepYamlRule> {
-    val ruleSet = parseSemgrepYaml(yml, trace) ?: return emptyList()
-    return ruleSet.rules.filter { rule ->
-        "java" in rule.languages.map { it.lowercase() }
-    }
-}
-
 fun parseSemgrepRule(rule: SemgrepYamlRule, trace: SemgrepRuleLoadStepTrace): SemgrepRule<Formula> =
     if (rule.mode == "taint") {
         parseTaintRule(rule, trace)
@@ -486,8 +479,12 @@ private fun Formula.toMetaVarPatternConstraint(): MetaVarConstraintFormula<RawMe
         is Formula.LeafPattern -> MetaVarConstraintFormula.Constraint(RawMetaVarConstraint.Pattern(pattern))
         is Formula.Regex -> MetaVarConstraintFormula.Constraint(RawMetaVarConstraint.RegExp(pattern))
         is Formula.Not -> child.toMetaVarPatternConstraint()?.let { MetaVarConstraintFormula.mkNot(it) }
+
         is Formula.And -> children.mapTo(hashSetOf()) { it.toMetaVarPatternConstraint() ?: return null }
             .let { MetaVarConstraintFormula.mkAnd(it) }
+
+        is Formula.Or -> children.mapTo(hashSetOf()) { it.toMetaVarPatternConstraint() ?: return null }
+            .let { MetaVarConstraintFormula.mkOr(it) }
 
         else -> null
     }
@@ -501,14 +498,6 @@ private sealed interface NormalizedFormula {
 
 private data class NormalizedFormulaCube(val literals: List<NormalizedFormula.Literal>)
 
-private fun NormalizedFormulaCube.toFormula(): Formula {
-    val args = literals.map { if (it.negated) Formula.Not(it.formula) else it.formula }
-    return when (args.size) {
-        1 -> args.first()
-        else -> Formula.And(args)
-    }
-}
-
 private fun Formula.normalizeToNNF(negated: Boolean): NormalizedFormula = when (this) {
     is Formula.Inside, // todo: handle inside nested formula
     is Formula.LeafPattern,
@@ -516,19 +505,7 @@ private fun Formula.normalizeToNNF(negated: Boolean): NormalizedFormula = when (
     is Formula.MetavarRegex,
     is Formula.MetavarFocus,
     is Formula.Regex -> NormalizedFormula.Literal(this, negated)
-
-    is Formula.MetavarPattern -> {
-        if (!negated) {
-            val nestedDnf = formula.normalizeToNNF(negated = false).toDNF()
-            val lits = nestedDnf.map {
-                val f = Formula.MetavarPattern(name, it.toFormula())
-                NormalizedFormula.Literal(f, negated)
-            }
-            NormalizedFormula.Or(lits)
-        } else {
-            NormalizedFormula.Literal(this, negated)
-        }
-    }
+    is Formula.MetavarPattern -> NormalizedFormula.Literal(this, negated)
 
     is Formula.Not -> child.normalizeToNNF(!negated)
     is Formula.And -> if (!negated) {

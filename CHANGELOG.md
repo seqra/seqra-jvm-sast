@@ -1,3 +1,7 @@
+## 2025.11.27
+### feat: Rewrite rule composition and avoid split on metavar constraints
+- Rewrite rule composition
+- Avoid split on metavar constraints
 ## 2025.11.24
 ### feat: Enhance path reporting, fix trace gen
 - Fix spring controller rules
