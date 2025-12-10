@@ -51,9 +51,12 @@ sealed interface ParamCondition {
     data class SpecificStaticFieldValue(val fieldName: String, val fieldClass: TypeNamePattern) : Atom
 }
 
-data class SpecificBoolValue(val value: Boolean) : ParamCondition.Atom
+sealed interface SpecificConstantValue: ParamCondition.Atom
 
-data class SpecificStringValue(val value: String) : ParamCondition.Atom
+data class SpecificBoolValue(val value: Boolean) : SpecificConstantValue
+data class SpecificIntValue(val value: Int) : SpecificConstantValue
+data class SpecificStringValue(val value: String) : SpecificConstantValue
+data object SpecificNullValue : SpecificConstantValue
 
 data class IsMetavar(val metavar: MetavarAtom) : ParamCondition.Atom
 
@@ -63,8 +66,9 @@ sealed interface MetavarAtom {
     data class Basic(val name: String): MetavarAtom {
         override fun toString(): String = name
 
-        override val basics: Set<Basic>
-            get() = setOf(this)
+        override val basics: Set<Basic> get() = setOf(this)
+
+        val isArtificial: Boolean get() = name.startsWith(ArtificialMetaVarName)
     }
 
     data class Complex(override val basics: Set<Basic>): MetavarAtom {
@@ -79,6 +83,11 @@ sealed interface MetavarAtom {
         fun create(metavar: String): Basic {
             return Basic(metavar)
         }
+
+        private const val ArtificialMetaVarName = "\$<ARTIFICIAL>"
+
+        fun createArtificial(classifier: String): MetavarAtom =
+            create("${ArtificialMetaVarName}_$classifier")
 
         fun create(metavars: Collection<Basic>): MetavarAtom {
             if (metavars.isEmpty()) {

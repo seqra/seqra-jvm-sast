@@ -1,6 +1,8 @@
 package org.seqra.semgrep.pattern.conversion
 
 import org.seqra.semgrep.pattern.ActionListSemgrepRule
+import org.seqra.semgrep.pattern.ConcreteName
+import org.seqra.semgrep.pattern.Formula
 import org.seqra.semgrep.pattern.MetaVarConstraint
 import org.seqra.semgrep.pattern.MetaVarConstraints
 import org.seqra.semgrep.pattern.NormalizedSemgrepRule
@@ -16,13 +18,12 @@ import org.seqra.semgrep.pattern.SemgrepRuleLoadStepTrace
 import org.seqra.semgrep.pattern.SemgrepRuleLoadTrace
 import org.seqra.semgrep.pattern.SemgrepTaintRule
 import org.seqra.semgrep.pattern.SemgrepTraceEntry.Step
-import org.seqra.semgrep.pattern.SemgrepYamlRule
+import org.seqra.semgrep.pattern.StringLiteral
 import org.seqra.semgrep.pattern.conversion.automata.SemgrepRuleAutomata
 import org.seqra.semgrep.pattern.conversion.automata.operations.containsAcceptState
 import org.seqra.semgrep.pattern.conversion.automata.transformSemgrepRuleToAutomata
 import org.seqra.semgrep.pattern.convertToRawRule
-import org.seqra.semgrep.pattern.parseSemgrepRule
-import org.seqra.semgrep.pattern.transform
+import org.seqra.semgrep.pattern.transformOrIgnore
 import kotlin.time.Duration.Companion.seconds
 
 class SemgrepRuleAutomataBuilder(
@@ -43,11 +44,9 @@ class SemgrepRuleAutomataBuilder(
     val stats = Stats()
 
     fun build(
-        yamlRule: SemgrepYamlRule,
+        semgrepRule: SemgrepRule<Formula>,
         semgrepRuleTrace: SemgrepRuleLoadTrace
     ): SemgrepRule<RuleWithMetaVars<SemgrepRuleAutomata, ResolvedMetaVarInfo>> {
-        val semgrepRule = parseSemgrepRule(yamlRule, semgrepRuleTrace.stepTrace(Step.LOAD_RULESET))
-
         val c2rrTrace = semgrepRuleTrace.stepTrace(Step.BUILD_CONVERT_TO_RAW_RULE)
         val rawRules = convertToRawRule(semgrepRule, c2rrTrace)
 
@@ -134,7 +133,7 @@ class SemgrepRuleAutomataBuilder(
 
         stats.emptyAutomata += emptyAutomataFailure
         t2aTrace.phaseError(emptyAutomataFailure) {
-            error("Empty accepting state", Reason.WARNING)
+            error("Empty accepting state", Reason.ERROR)
         }
 
         return ruleAutomata
@@ -185,6 +184,7 @@ class SemgrepRuleAutomataBuilder(
     ): List<RuleWithMetaVars<NormalizedSemgrepRule, ResolvedMetaVarInfo>> {
         var resultRules = listOf(rule.rule)
 
+        resultRules = resultRules.flatMap(::rewriteCatchStatement)
         resultRules = resultRules.flatMap(::rewriteAddExpr)
         resultRules = resultRules.flatMap(::rewriteAssignEllipsis)
         resultRules = resultRules.flatMap(::rewriteMethodInvocationObj)
@@ -226,26 +226,21 @@ class SemgrepRuleAutomataBuilder(
             return ResolvedMetaVarInfo(info.focusMetaVars, emptyMap())
         }
 
-        class PatternConstraintFailure : Exception() {
-            override fun fillInStackTrace(): Throwable = this
-        }
-
         val constraints = info.metaVariableConstraints.mapValues { (_, constraint) ->
-            val formula = try {
-                constraint.transform {
-                    when (it) {
-                        is RawMetaVarConstraint.Pattern -> {
-                            patternConstraintValue(it.value, semgrepTrace) ?: throw PatternConstraintFailure()
-                        }
-
-                        is RawMetaVarConstraint.RegExp -> {
-                            MetaVarConstraint.RegExp(it.regex)
+            val formula = constraint.transformOrIgnore {
+                when (it) {
+                    is RawMetaVarConstraint.Pattern -> {
+                        patternConstraintValue(it.value, semgrepTrace) ?: run {
+                            semgrepTrace.error("Metavar constraint parsing failure", Reason.NOT_IMPLEMENTED)
+                            null
                         }
                     }
+
+                    is RawMetaVarConstraint.RegExp -> {
+                        MetaVarConstraint.RegExp(it.regex)
+                    }
                 }
-            } catch (e: PatternConstraintFailure) {
-                return null
-            }
+            } ?: return null
 
             MetaVarConstraints(formula)
         }
@@ -259,6 +254,10 @@ class SemgrepRuleAutomataBuilder(
     ): MetaVarConstraint? {
         val parsed = parser.parseOrNull(pattern, semgrepTrace)
             ?: return null
+
+        if (parsed is StringLiteral && parsed.content is ConcreteName) {
+            return MetaVarConstraint.Concrete(parsed.content.name)
+        }
 
         val patternConcreteValue = tryExtractPatternDotSeparatedParts(parsed) ?: return null
         val patternConcreteNames = tryExtractConcreteNames(patternConcreteValue) ?: return null

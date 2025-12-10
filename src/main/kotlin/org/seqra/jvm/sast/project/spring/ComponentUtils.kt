@@ -5,28 +5,28 @@ import org.seqra.ir.api.jvm.JIRClassOrInterface
 import org.seqra.ir.api.jvm.JIRMethod
 import org.seqra.ir.api.jvm.ext.allSuperHierarchySequence
 import org.seqra.ir.api.jvm.ext.findMethodOrNull
+import org.seqra.jvm.sast.dataflow.matchedAnnotations
 
-fun JIRAnnotation.isSpringAutowiredAnnotation(): Boolean = jIRClass?.name == SpringAutowired
+fun JIRMethod.isSpringControllerMethod(): Boolean =
+    collectSpringControllerAnnotations() != null
 
-fun JIRMethod.isSpringControllerMethod(): Boolean {
-    if (annotations.any { it.jIRClass?.name in springControllerMethodAnnotations }) return true
+fun String.isSpringMethodAnnotation(): Boolean =
+    this in springControllerMethodMappingAnnotations
 
-    return enclosingClass.allSuperHierarchySequence
-        .mapNotNull { it.findMethodOrNull(name, description) }
-        .any { m -> m.annotations.any { it.jIRClass?.name in springControllerMethodAnnotations } }
-}
+fun String.isSpringRequestMappingAnnotation(): Boolean =
+    this == springControllerRequestMapping
 
-fun JIRAnnotation.isSpringValidated(): Boolean =
-    jIRClass?.name == JakartaValid
+fun String.isSpringControllerAnnotation(): Boolean =
+    isSpringRequestMappingAnnotation() || isSpringMethodAnnotation()
 
-fun JIRAnnotation.isSpringPathVariable(): Boolean =
-    jIRClass?.name == SpringPathVariable
+fun String.isSpringControllerClassAnnotation(): Boolean =
+    this in springControllerClassAnnotations
 
-fun JIRAnnotation.isSpringModelAttribute(): Boolean =
-    jIRClass?.name == SpringModelAttribute
-
-fun JIRAnnotation.isJakartaConstraint(): Boolean =
-    jIRClass?.name == JakartaConstraint
+fun String.isSpringAutowiredAnnotation(): Boolean = this == SpringAutowired
+fun String.isSpringValidated(): Boolean = this == JakartaValid
+fun String.isSpringPathVariable(): Boolean = this == SpringPathVariable
+fun String.isSpringModelAttribute(): Boolean = this == SpringModelAttribute
+fun String.isJakartaConstraint(): Boolean = this == JakartaConstraint
 
 fun JIRClassOrInterface.collectSpringRequestMappingAnnotation(): List<JIRAnnotation>? {
     classSpringRequestMappingAnnotation()?.let { return it }
@@ -41,14 +41,8 @@ fun JIRMethod.collectSpringControllerAnnotations(): List<JIRAnnotation>? {
         .firstNotNullOfOrNull { m -> m.methodSpringControllerAnnotations()  }
 }
 
-fun JIRClassOrInterface.classSpringRequestMappingAnnotation(): List<JIRAnnotation>? {
-    val thisAnnotations = annotations.filter { it.jIRClass?.name == springControllerRequestMapping }
-    if (thisAnnotations.isNotEmpty()) return thisAnnotations
-    return null
-}
+fun JIRClassOrInterface.classSpringRequestMappingAnnotation(): List<JIRAnnotation>? =
+    matchedAnnotations(String::isSpringRequestMappingAnnotation).takeIf { it.isNotEmpty() }
 
-fun JIRMethod.methodSpringControllerAnnotations(): List<JIRAnnotation>? {
-    val thisAnnotations = annotations.filter { it.jIRClass?.name in springControllerMethodAnnotations }
-    if (thisAnnotations.isNotEmpty()) return thisAnnotations
-    return null
-}
+fun JIRMethod.methodSpringControllerAnnotations(): List<JIRAnnotation>? =
+    matchedAnnotations(String::isSpringControllerAnnotation).takeIf { it.isNotEmpty() }

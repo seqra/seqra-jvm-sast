@@ -28,11 +28,14 @@ import org.seqra.ir.api.jvm.JIRField
 import org.seqra.ir.api.jvm.JIRMethod
 import org.seqra.ir.api.jvm.cfg.JIRInst
 import org.seqra.ir.api.jvm.ext.findMethodOrNull
+import org.seqra.jvm.sast.dataflow.DebugOptions
 import org.seqra.jvm.sast.dataflow.DummySerializationContext
 import org.seqra.jvm.sast.dataflow.JIRTaintAnalyzer
 import org.seqra.jvm.sast.dataflow.JIRTaintRulesProvider
+import org.seqra.jvm.sast.dataflow.TaintAnalyzerOptions
 import org.seqra.jvm.sast.dataflow.rules.TaintConfiguration
 import org.seqra.jvm.sast.project.ProjectAnalysisContext
+import org.seqra.jvm.sast.project.ProjectAnalysisOptions
 import org.seqra.jvm.sast.project.ProjectKind
 import org.seqra.jvm.sast.project.initializeProjectAnalysisContext
 import org.seqra.jvm.sast.project.selectProjectEntryPoints
@@ -47,18 +50,18 @@ private val logger = object : KLogging() {}.logger
 @Suppress("unused")
 fun testProjectAnalyzerOnTraces(
     project: Project,
-    projectPackage: String?,
     ifdsAnalysisTimeout: Duration,
     ifdsApMode: ApMode,
     projectKind: ProjectKind,
     testDataJsonPath: Path,
-    debugOptions: JIRTaintAnalyzer.DebugOptions
+    debugOptions: DebugOptions
 ) {
     val testDataTaintConfig: List<TracePair> = Json.decodeFromString(
         testDataJsonPath.readText()
     )
 
-    val analysisContext = initializeProjectAnalysisContext(project, projectPackage, projectKind)
+    val options = ProjectAnalysisOptions(projectKind = projectKind)
+    val analysisContext = initializeProjectAnalysisContext(project, options)
 
     val mainConfig = JIRTaintRulesProvider(
         TaintConfiguration(analysisContext.cp).also { it.loadConfig(loadDefaultConfig()) }
@@ -211,18 +214,21 @@ private fun ProjectAnalysisContext.analyze(
     entryPoints: List<JIRMethod>,
     ifdsAnalysisTimeout: Duration,
     ifdsApMode: ApMode,
-    debugOptions: JIRTaintAnalyzer.DebugOptions
+    debugOptions: DebugOptions
 ): List<VulnerabilityWithTrace> {
-    JIRTaintAnalyzer(
-        cp, config,
-        projectLocations = projectClasses.projectLocations,
+    val options = TaintAnalyzerOptions(
         ifdsTimeout = ifdsAnalysisTimeout,
         ifdsApMode = ifdsApMode,
         symbolicExecutionEnabled = false,
         analysisCwe = null,
-        summarySerializationContext = DummySerializationContext,
         storeSummaries = false,
         debugOptions = debugOptions
+    )
+    JIRTaintAnalyzer(
+        cp, config,
+        projectClasses = { projectClasses.isProjectClass(it) },
+        options = options,
+        summarySerializationContext = DummySerializationContext,
     ).use { analyzer ->
         return analyzer.analyzeWithIfds(entryPoints)
     }

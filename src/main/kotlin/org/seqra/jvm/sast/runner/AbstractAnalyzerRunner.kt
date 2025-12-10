@@ -8,7 +8,7 @@ import com.github.ajalt.clikt.parameters.types.choice
 import com.github.ajalt.clikt.parameters.types.int
 import mu.KLogging
 import org.seqra.dataflow.ap.ifds.access.ApMode
-import org.seqra.jvm.sast.dataflow.JIRTaintAnalyzer.DebugOptions
+import org.seqra.jvm.sast.dataflow.DebugOptions
 import org.seqra.jvm.sast.project.ProjectKind
 import org.seqra.jvm.sast.util.file
 import org.seqra.jvm.sast.util.newDirectory
@@ -40,6 +40,9 @@ abstract class AbstractAnalyzerRunner : CliWithLogger() {
     private val debugFactReachabilitySarif: Boolean by option(help = "Generate SARIF with fact reachability info")
         .flag(default = false)
 
+    private val debugRunRuleTests: Boolean by option(help = "Run rule tests instead of project analysis")
+        .flag(default = false)
+
     private val project: Path by option(help = "Project configuration (yaml)")
         .file()
         .required()
@@ -58,6 +61,7 @@ abstract class AbstractAnalyzerRunner : CliWithLogger() {
             enableIfdsCoverage = debugIfdsCoverage,
             factReachabilitySarif = debugFactReachabilitySarif,
             enableVulnSummary = false,
+            runRuleTests = debugRunRuleTests,
         )
     }
 

@@ -35,7 +35,6 @@ import org.seqra.ir.api.common.CommonMethod
 import org.seqra.ir.api.common.cfg.CommonInst
 import org.seqra.ir.api.jvm.JIRClasspath
 import org.seqra.ir.api.jvm.JIRMethod
-import org.seqra.ir.api.jvm.RegisteredLocation
 import org.seqra.ir.api.jvm.ext.packageName
 import org.seqra.ir.impl.features.usagesExt
 import org.seqra.jvm.graph.JApplicationGraphImpl
@@ -47,22 +46,11 @@ import kotlin.time.TimeSource
 class JIRTaintAnalyzer(
     val cp: JIRClasspath,
     val taintConfiguration: TaintRulesProvider,
-    val projectLocations: Set<RegisteredLocation>,
-    val ifdsTimeout: Duration,
-    val ifdsApMode: ApMode,
-    val symbolicExecutionEnabled: Boolean,
-    val analysisCwe: Set<Int>?,
+    val projectClasses: ClassLocationChecker,
+    val options: TaintAnalyzerOptions,
     val summarySerializationContext: SummarySerializationContext,
-    val storeSummaries: Boolean,
-    val analysisUnit: JIRUnitResolver = PackageUnitResolver(projectLocations = projectLocations),
-    val debugOptions: DebugOptions
+    val analysisUnit: JIRUnitResolver = PackageUnitResolver(projectClasses),
 ): AutoCloseable {
-    data class DebugOptions(
-        val taintRulesStatsSamplingPeriod: Int?,
-        val enableIfdsCoverage: Boolean,
-        val factReachabilitySarif: Boolean,
-        val enableVulnSummary: Boolean,
-    )
 
     private val ifdsAnalysisGraph by lazy {
         val usages = runBlocking { cp.usagesExt() }
@@ -87,7 +75,7 @@ class JIRTaintAnalyzer(
     }
 
     private val apManager by lazy {
-        when (ifdsApMode) {
+        when (options.ifdsApMode) {
             ApMode.Tree -> TreeApManager(UnrollStrategy)
             ApMode.Cactus -> CactusApManager(UnrollStrategy)
             ApMode.Automata -> AutomataApManager(UnrollStrategy)
@@ -102,7 +90,7 @@ class JIRTaintAnalyzer(
         taintConfig,
         summarySerializationContext,
         apManager,
-        debugOptions.taintRulesStatsSamplingPeriod
+        options.debugOptions?.taintRulesStatsSamplingPeriod
     )
 
     private fun analyzeTaintWithIfdsEngine(
@@ -110,17 +98,17 @@ class JIRTaintAnalyzer(
     ): List<VulnerabilityWithTrace> {
         val analysisStart = TimeSource.Monotonic.markNow()
 
-        val analysisTimeout = ifdsTimeout * 0.95 // Reserve 5% of time for report creation
+        val analysisTimeout = options.ifdsTimeout * 0.95 // Reserve 5% of time for report creation
         runCatching { ifdsEngine.runAnalysis(entryPoints, timeout = analysisTimeout, cancellationTimeout = 30.seconds) }
             .onFailure { logger.error(it) { "Ifds engine failed" } }
 
-        if (debugOptions.enableIfdsCoverage) {
+        if (options.debugOptions?.enableIfdsCoverage == true) {
             logger.debug {
                 ifdsEngine.reportCoverage()
             }
         }
 
-        if (storeSummaries) {
+        if (options.storeSummaries) {
             logger.info { "Storing summaries" }
             ifdsEngine.storeSummaries()
         }
@@ -128,7 +116,7 @@ class JIRTaintAnalyzer(
         val allVulnerabilities = ifdsEngine.getVulnerabilities()
 
         logger.info { "Start vulnerability confirmation" }
-        val vulnCheckTimeout = ifdsTimeout - analysisStart.elapsedNow()
+        val vulnCheckTimeout = options.ifdsTimeout - analysisStart.elapsedNow()
         var vulnerabilities = if (!vulnCheckTimeout.isPositive()) {
             logger.warn { "No time remaining for vulnerability confirmation" }
             allVulnerabilities
@@ -141,23 +129,23 @@ class JIRTaintAnalyzer(
 
         logger.info { "Total vulnerabilities: ${vulnerabilities.size}" }
 
-        if (debugOptions.enableVulnSummary) {
+        if (options.debugOptions?.enableVulnSummary == true) {
             logger.info {
                 printVulnSummary(vulnerabilities)
             }
         }
 
-        if (analysisCwe != null) {
+        if (options.analysisCwe != null) {
             vulnerabilities = vulnerabilities.filter {
                 val cwe = (it.rule.meta as TaintSinkMeta).cwe
-                cwe?.intersect(analysisCwe)?.isNotEmpty() ?: true
+                cwe?.intersect(options.analysisCwe)?.isNotEmpty() ?: true
             }
 
-            logger.info { "Vulnerabilities with cwe $analysisCwe: ${vulnerabilities.size}" }
+            logger.info { "Vulnerabilities with cwe ${options.analysisCwe}: ${vulnerabilities.size}" }
         }
 
         logger.info { "Start trace generation" }
-        val traceResolutionTimeout = ifdsTimeout - analysisStart.elapsedNow()
+        val traceResolutionTimeout = options.ifdsTimeout - analysisStart.elapsedNow()
         if (!traceResolutionTimeout.isPositive()) {
             logger.warn { "No time remaining for trace resolution" }
             return emptyList()
@@ -177,7 +165,7 @@ class JIRTaintAnalyzer(
         return resolveVulnerabilityTraces(
             entryPointsSet, vulnerabilities,
             resolverParams = TraceResolver.Params(
-                resolveEntryPointToStartTrace = symbolicExecutionEnabled,
+                resolveEntryPointToStartTrace = options.symbolicExecutionEnabled,
                 startToSourceTraceResolutionLimit = 100,
                 startToSinkTraceResolutionLimit = 100,
             ),
@@ -195,7 +183,7 @@ class JIRTaintAnalyzer(
         val projectClassCoverage = methodStats.stats.entries
             .groupBy({ (it.key as JIRMethod).enclosingClass }, { it.key as JIRMethod to it.value })
             .filterKeys { it !is LambdaAnonymousClassFeature.JIRLambdaClass }
-            .filterKeys { it.declaration.location in projectLocations }
+            .filterKeys { projectClasses.isProjectClass(it) }
 
         appendLine("Project class coverage")
         projectClassCoverage.entries
@@ -276,9 +264,9 @@ class JIRTaintAnalyzer(
     companion object {
         private val logger = object : KLogging() {}.logger
 
-        class PackageUnitResolver(private val projectLocations: Set<RegisteredLocation>) : JIRUnitResolver {
+        class PackageUnitResolver(private val projectLocations: ClassLocationChecker) : JIRUnitResolver {
             override fun resolve(method: JIRMethod): UnitType {
-                if (method.enclosingClass.declaration.location !in projectLocations) {
+                if (!projectLocations.isProjectClass(method.enclosingClass)) {
                     return UnknownUnit
                 }
 

@@ -2,16 +2,17 @@ package org.seqra.semgrep.pattern.conversion.automata
 
 import org.seqra.dataflow.util.forEach
 import org.seqra.dataflow.util.printer.PrintableGraph
+import org.seqra.semgrep.pattern.conversion.SemgrepPatternAction.ClassConstraint
 import org.seqra.semgrep.pattern.conversion.automata.MethodFormula.And
 import org.seqra.semgrep.pattern.conversion.automata.MethodFormula.Cube
 import org.seqra.semgrep.pattern.conversion.automata.MethodFormula.True
 import org.seqra.semgrep.pattern.conversion.automata.operations.traverse
+import org.seqra.semgrep.pattern.conversion.taint.TaintAutomataEdges
 import org.seqra.semgrep.pattern.conversion.taint.TaintRegisterStateAutomata
 import org.seqra.semgrep.pattern.conversion.taint.TaintRegisterStateAutomata.EdgeCondition
 import org.seqra.semgrep.pattern.conversion.taint.TaintRegisterStateAutomata.EdgeEffect
 import org.seqra.semgrep.pattern.conversion.taint.TaintRegisterStateAutomata.State
 import org.seqra.semgrep.pattern.conversion.taint.TaintRuleEdge
-import org.seqra.semgrep.pattern.conversion.taint.TaintAutomataEdges
 
 fun SemgrepRuleAutomata.view(name: String = "") {
     PrintableSemgrepRuleAutomata(this).view(name)
@@ -278,10 +279,15 @@ private fun MethodSignature.prettyPrint(): String =
     "${enclosingClassName.name}.${methodName.name}"
 
 private fun MethodConstraint.prettyPrint(): String = when (this) {
-    is ClassModifierConstraint -> "C@($modifier)"
+    is ClassModifierConstraint -> "C@(${constraint.prettyPrint()})"
     is MethodModifierConstraint -> "M@($modifier)"
     is NumberOfArgsConstraint -> "Args($num)"
     is ParamConstraint -> prettyPrint()
+}
+
+private fun ClassConstraint.prettyPrint(): String = when (this) {
+    is ClassConstraint.Signature -> "$modifier"
+    is ClassConstraint.TypeConstraint -> "it $superType"
 }
 
 private fun ParamConstraint.prettyPrint(): String {

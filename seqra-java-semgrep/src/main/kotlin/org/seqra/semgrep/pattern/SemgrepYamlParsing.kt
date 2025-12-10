@@ -1,8 +1,11 @@
 package org.seqra.semgrep.pattern
 
 import com.charleskorn.kaml.AnchorsAndAliases
+import com.charleskorn.kaml.UnknownPropertyException
 import com.charleskorn.kaml.Yaml
 import com.charleskorn.kaml.YamlConfiguration
+import com.charleskorn.kaml.YamlException
+import com.charleskorn.kaml.YamlList
 import com.charleskorn.kaml.YamlMap
 import com.charleskorn.kaml.YamlNode
 import com.charleskorn.kaml.YamlScalar
@@ -10,7 +13,9 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
 import kotlinx.serialization.builtins.serializer
+import org.seqra.semgrep.pattern.SemgrepErrorEntry.Reason.ERROR
 import org.seqra.semgrep.pattern.SemgrepErrorEntry.Reason.NOT_IMPLEMENTED
+import org.seqra.semgrep.pattern.SemgrepErrorEntry.Reason.WARNING
 import org.seqra.semgrep.pattern.SemgrepTraceEntry.Step
 import org.seqra.semgrep.pattern.conversion.cartesianProductMapTo
 import java.util.Optional
@@ -24,9 +29,11 @@ data class SemgrepYamlRuleSet(
 @Serializable
 data class SemgrepYamlRule(
     val id: String,
-    val languages: List<String>,
+    val languages: List<String>? = null,
     val pattern: String? = null,
     val mode: String? = null,
+    val options: YamlMap? = null,
+    val join: SemgrepYamlJoinRule? = null,
     val patterns: List<ComplexPattern> = emptyList(),
     @SerialName("pattern-either")
     val patternEither: List<ComplexPattern> = emptyList(),
@@ -41,6 +48,27 @@ data class SemgrepYamlRule(
     val patternPropagators: List<PatternPropagator> = emptyList(),
     @SerialName("pattern-sanitizers")
     val patternSanitizers: List<PatternSanitizer> = emptyList(),
+)
+
+@Serializable
+data class SemgrepYamlJoinRule(
+    val refs: List<SemgrepYamlJoinRuleRef> = emptyList(),
+    val rules: List<SemgrepYamlRule> = emptyList(),
+    val on: List<String> = emptyList(),
+)
+
+@Serializable
+data class SemgrepYamlJoinRuleRef(
+    val rule: String,
+    @SerialName("as")
+    val `as`: String,
+    val renames: List<SemgrepYamlJoinRuleRefRenames> = emptyList()
+)
+
+@Serializable
+data class SemgrepYamlJoinRuleRefRenames(
+    val from: String,
+    val to: String,
 )
 
 @Serializable
@@ -103,6 +131,22 @@ private fun YamlNode.decodeFocusMetaVariables(): List<String> {
     }
 
     return yaml.decodeFromYamlNode<List<String>>(this)
+}
+
+fun YamlMap.getBoolKeyOrFalse(key: String): Boolean =
+    (get(key) as? YamlScalar)?.content?.lowercase() == "true"
+
+fun YamlMap.readStrings(key: String): List<String>? {
+    val entry = entries.entries.find { it.key.content.lowercase() == key.lowercase() } ?: return null
+    return when (val value = entry.value) {
+        is YamlScalar -> {
+            listOf(value.content)
+        }
+        is YamlList -> {
+            value.items.mapNotNull { (it as? YamlScalar)?.content }
+        }
+        else -> null
+    }
 }
 
 @Serializable
@@ -284,39 +328,97 @@ sealed interface Formula {
     data class Regex(val pattern: String) : Formula
 }
 
-private val yaml = Yaml(
-    configuration = YamlConfiguration(
-        codePointLimit = Int.MAX_VALUE,
-        strictMode = false,
-        anchorsAndAliases = AnchorsAndAliases.Permitted()
-    )
+private val yamlConfig = YamlConfiguration(
+    codePointLimit = Int.MAX_VALUE,
+    strictMode = false,
+    anchorsAndAliases = AnchorsAndAliases.Permitted()
 )
+
+private val yaml = Yaml(configuration = yamlConfig)
+private val strictYaml = Yaml(configuration = yamlConfig.copy(strictMode = true))
 
 private var currentLoadTrace: SemgrepFileLoadTrace? = null
 
 fun parseSemgrepYaml(yml: String, trace: SemgrepFileLoadTrace): SemgrepYamlRuleSet? =
     try {
         currentLoadTrace = trace
-        yaml.decodeFromString(SemgrepYamlRuleSet.serializer(), yml)
+        tryParseRuleSetYaml(yml)
     } catch (ex: Throwable) {
-        trace.error(
-            Step.LOAD_RULESET,
-            "Failed to load rule set from yaml: ${ex.message}",
-            SemgrepErrorEntry.Reason.ERROR,
-        )
+        trace.error(Step.LOAD_RULESET, "Failed to load rule set from yaml: ${ex.message}", ERROR)
         null
     } finally {
         currentLoadTrace = null
     }
 
-fun parseSemgrepRule(rule: SemgrepYamlRule, trace: SemgrepRuleLoadStepTrace): SemgrepRule<Formula> =
-    if (rule.mode == "taint") {
-        parseTaintRule(rule, trace)
-    } else {
-        SemgrepMatchingRule(listOfNotNull(parseMatchingRuleFormula(rule, trace)))
+private fun tryParseRuleSetYaml(yml: String): SemgrepYamlRuleSet = try {
+    strictYaml.decodeFromString(SemgrepYamlRuleSet.serializer(), yml)
+} catch (ex: YamlException) {
+    val rootCause = ex.rootCause()
+    if (rootCause !is UnknownPropertyException) throw ex
+
+    currentLoadTrace?.error(Step.LOAD_RULESET, "Unknown property ${rootCause.propertyName}", WARNING)
+
+    yaml.decodeFromString(SemgrepYamlRuleSet.serializer(), yml)
+}
+
+private fun YamlException.rootCause(): Throwable {
+    var result: Throwable = this
+    while (true) {
+        result = result.cause ?: return result
+    }
+}
+
+fun parseMatchingRule(rule: SemgrepYamlRule, trace: SemgrepRuleLoadStepTrace): SemgrepMatchingRule<Formula>? {
+    val parsed = parseMatchingRuleFormula(rule, trace) ?: return null
+    return SemgrepMatchingRule(listOf(parsed))
+}
+
+data class SemgrepYamlJoinRuleParsed(
+    val refs: List<SemgrepYamlJoinRuleRef>,
+    val rules: List<SemgrepYamlRule>,
+    val on: List<SemgrepJoinRuleOn>,
+)
+
+data class SemgrepJoinRuleOn(
+    val left: SemgrepJoinRuleOnVar,
+    val right: SemgrepJoinRuleOnVar,
+    val op: SemgrepJoinOnOperation
+)
+
+data class SemgrepJoinRuleOnVar(val ruleName: String, val varName: String)
+
+enum class SemgrepJoinOnOperation(val op: String) {
+    EQ("=="), COMPOSE("->"), TRANSITIVE("-->")
+}
+
+fun parseJoinRule(rule: SemgrepYamlJoinRule, trace: SemgrepRuleLoadStepTrace): SemgrepYamlJoinRuleParsed? {
+    val parsedOn = rule.on.map { parseJoinOnCondition(it, trace) ?: return null }
+    return SemgrepYamlJoinRuleParsed(rule.refs, rule.rules, parsedOn)
+}
+
+// Expected format: <rule-name>.<var> <op> <rule-name>.<var>
+private val joinOnConditionPattern by lazy {
+    val operations = SemgrepJoinOnOperation.entries.map { it.op }
+    val ruleWithVarPattern = """(.+)\s*\.\s*(.+)"""
+    Regex("""$ruleWithVarPattern\s*(${operations.joinToString("|")})\s*$ruleWithVarPattern""")
+}
+
+private fun parseJoinOnCondition(condition: String, trace: SemgrepRuleLoadStepTrace): SemgrepJoinRuleOn? {
+    val match = joinOnConditionPattern.matchEntire(condition)
+    if (match == null) {
+        trace.error("Join 'on' condition parse failed: '$condition'", ERROR)
+        return null
     }
 
-private fun parseTaintRule(rule: SemgrepYamlRule, trace: SemgrepRuleLoadStepTrace): SemgrepTaintRule<Formula> =
+    val (leftRule, leftVar, opStr, rightRule, rightVar) = match.destructured.toList()
+
+    val op = SemgrepJoinOnOperation.entries.first { it.op == opStr }
+    val left = SemgrepJoinRuleOnVar(leftRule.trim(), leftVar.trim())
+    val right = SemgrepJoinRuleOnVar(rightRule.trim(), rightVar.trim())
+    return SemgrepJoinRuleOn(left, right, op)
+}
+
+fun parseTaintRule(rule: SemgrepYamlRule, trace: SemgrepRuleLoadStepTrace): SemgrepTaintRule<Formula> =
     SemgrepTaintRule(
         sources = rule.patternSources.mapNotNull {
             SemgrepTaintSource(
@@ -459,6 +561,10 @@ private fun convertToNormalizedRule(literals: List<NormalizedFormula.Literal>,
     if (patterns.isEmpty() && patternInsides.isNotEmpty()) {
         // note: semgrep allows pattern-inside signature rules without pattern
         patterns.add("...")
+    }
+
+    if (patterns.isEmpty()) {
+        semgrepTrace.error("Rule has no patterns", ERROR)
     }
 
     return RuleWithMetaVars(

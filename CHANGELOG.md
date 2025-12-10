@@ -1,3 +1,28 @@
+## 2025.12.10
+### feat: Update CI, core, and project model; enhance dependency handling
+- Use dependencies from infra
+- Update project model
+- Consider project package
+- Test project analyzer
+- Update core
+- AST-based column resolver
+- Add dependencies version on CI
+- Fix ci container
+- Publish with dependencies image
+- Publish workflow dispatch
+- Dependencies image
+- Fix tree any accessor
+- Fix rule ids
+- More on annotations & is-null 
+- Spring annotation inheritance & minor fixes
+- Update core
+- Remove absolute paths from rule ids
+- Rewrite taint mark name generation
+- Minor fixes
+- Add lambda captures resolution
+- Add apache FilenameUtils
+- Support join with taint rules
+- Initial join rules support
 ## 2025.11.27
 ### fix: Resolve cfg performance issues
 - Fix cfg performance issues

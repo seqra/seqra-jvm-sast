@@ -16,6 +16,7 @@ import kotlinx.collections.immutable.persistentListOf
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
+import org.seqra.dataflow.configuration.CommonTaintConfigurationSinkMeta.Severity
 import org.seqra.semgrep.pattern.SemgrepErrorEntry
 import org.seqra.semgrep.pattern.SemgrepJavaPattern
 import org.seqra.semgrep.pattern.SemgrepJavaPatternParser
@@ -29,16 +30,15 @@ import org.seqra.semgrep.pattern.conversion.PatternToActionListConverter
 import org.seqra.semgrep.pattern.conversion.SemgrepPatternParser
 import java.nio.file.Path
 import kotlin.io.path.Path
-import kotlin.io.path.absolutePathString
 import kotlin.io.path.deleteExisting
 import kotlin.io.path.extension
 import kotlin.io.path.pathString
 import kotlin.io.path.readText
+import kotlin.io.path.relativeTo
 import kotlin.io.path.walk
 import kotlin.io.path.writeText
 import kotlin.random.Random
 import kotlin.system.measureTimeMillis
-import kotlin.time.Duration
 import kotlin.time.measureTime
 
 fun main() {
@@ -79,7 +79,7 @@ fun main() {
         collectParsingStats(path)
 //        testStability(path) // May need to increase automataBuildTimeout to pass
     }
-    println("Time is ${tm * 0.001}s")
+//    println("Time is ${tm * 0.001}s")
 
 //    val s = "int1|12char|4567"
 //    println(checkIfRegexIsSimpleEnumeration(s))
@@ -379,7 +379,7 @@ private fun collectParsingStats(path: Path): List<Pair<SemgrepJavaPattern, Strin
         }
     }
 
-    val ruleBuildTime = hashMapOf<String, Duration>()
+    val loader = SemgrepRuleLoader(patternParser, converter)
 
     val rootDir = path.toFile()
     rootDir.walk().filter { it.isFile }.forEach { file ->
@@ -393,13 +393,11 @@ private fun collectParsingStats(path: Path): List<Pair<SemgrepJavaPattern, Strin
 
         println("Reading $file")
         val content = file.readText()
-        val semgrepFileTrace = semgrepTrace.fileTrace(file.path)
-        val time = measureTime {
-            val loader = SemgrepRuleLoader(patternParser, converter)
-            loader.registerRuleSet(content, file.path, semgrepFileTrace)
-            loader.loadRules()
-        }
-        ruleBuildTime[file.path] = time
+        loader.registerRuleSet(content, file.toPath().relativeTo(path), path, semgrepTrace)
+    }
+
+    val time = measureTime {
+        loader.loadRules(Severity.Note)
     }
 
     println("Pattern statistics:")
@@ -418,10 +416,7 @@ private fun collectParsingStats(path: Path): List<Pair<SemgrepJavaPattern, Strin
     }
 
     println()
-    println("Build time")
-    ruleBuildTime.entries.sortedByDescending { it.value }.take(10).forEach { (key, value) ->
-        println("$key: $value")
-    }
+    println("Build time: $time")
 
     analyzeErrors(semgrepTrace)
 
@@ -429,28 +424,37 @@ private fun collectParsingStats(path: Path): List<Pair<SemgrepJavaPattern, Strin
 }
 
 private fun analyzeErrors(trace: SemgrepLoadTrace) {
-    val directFileErrors = mutableListOf<SemgrepErrorEntry>()
+    val allErrors = hashMapOf<SemgrepErrorEntry.Reason, MutableList<SemgrepErrorEntry>>()
     val ruleErrors = mutableListOf<SemgrepRuleLoadTrace>()
 
     for (fileError in trace.fileTraces) {
-        fileError.entries.filterIsInstanceTo<SemgrepErrorEntry, _>(directFileErrors)
+        allErrors.addErrors(fileError.entries.filterIsInstance<SemgrepErrorEntry>())
         ruleErrors.addAll(fileError.ruleTraces)
     }
 
-    val allErrors = mutableListOf<SemgrepErrorEntry>()
     for (ruleError in ruleErrors) {
-        ruleError.entries.filterIsInstanceTo<SemgrepErrorEntry, _>(allErrors)
-        ruleError.steps.forEach { it.entries.filterIsInstanceTo<SemgrepErrorEntry, _>(allErrors) }
+        allErrors.addErrors(ruleError.entries.filterIsInstance<SemgrepErrorEntry>())
+        ruleError.steps.forEach {
+            allErrors.addErrors(it.entries.filterIsInstance<SemgrepErrorEntry>())
+        }
     }
 
-    val errorKinds = (allErrors + directFileErrors).map { it.ruleKind() }
-    val sortedErrors = errorKinds.groupingBy { it }.eachCount().entries.sortedByDescending { it.value }
+    for ((groupKind, groupErrors) in allErrors.entries.sortedBy { it.key.toString() }) {
+        println("-".repeat(20))
+        println("Trace $groupKind")
 
-    println()
-    println("Error kinds")
-    sortedErrors.forEach { (key, value) ->
-        println("$key: $value")
+        val errorKinds = groupErrors.map { it.ruleKind() }
+        val sortedErrors = errorKinds.groupingBy { it }.eachCount().entries.sortedByDescending { it.value }
+        sortedErrors.forEach { (key, value) ->
+            println("$key: $value")
+        }
     }
+}
+
+private fun MutableMap<SemgrepErrorEntry.Reason, MutableList<SemgrepErrorEntry>>.addErrors(
+    errors: Iterable<SemgrepErrorEntry>
+) = errors.forEach {
+    this.getOrPut(it.reason, ::mutableListOf).add(it)
 }
 
 private fun SemgrepErrorEntry.ruleKind(): String {
@@ -517,9 +521,8 @@ private fun collectRuleSetStat(semgrepRulesPath: Path, allRules: List<Path>): Ha
     val loader = SemgrepRuleLoader()
     val trace = SemgrepLoadTrace()
     for (rulePath in allRules) {
-        val ruleName = semgrepRulesPath.resolve(rulePath).absolutePathString()
-        loader.registerRuleSet(rulePath.readText(), ruleName, trace.fileTrace(ruleName))
-        val (loadedRules, _) = loader.loadRules().unzip()
+        loader.registerRuleSet(rulePath.readText(), rulePath, semgrepRulesPath, trace)
+        val (loadedRules, _) = loader.loadRules(Severity.Note).unzip()
         loadedRules.forEach {
             stats[it.ruleId] = it.stats()
         }

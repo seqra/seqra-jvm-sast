@@ -1,6 +1,8 @@
 package org.seqra.semgrep.pattern
 
 sealed interface SemgrepRule<PatternsRepr> {
+    val isEmpty: Boolean
+
     fun <NewRepr> transform(block: (PatternsRepr) -> NewRepr): SemgrepRule<NewRepr>
     fun <NewRepr> flatMap(block: (PatternsRepr) -> List<NewRepr>): SemgrepRule<NewRepr>
 }
@@ -46,6 +48,8 @@ data object NoRequirement: SemgrepTaintRequires
 
 data class SemgrepTaintLabel(val label: String): SemgrepTaintRequires
 
+data class GeneratedTaintMark(val mark: Mark.GeneratedMark): SemgrepTaintRequires
+
 data class SemgrepTaintAnd(val left: SemgrepTaintRequires, val right: SemgrepTaintRequires): SemgrepTaintRequires
 
 data class SemgrepTaintOr(val left: SemgrepTaintRequires, val right: SemgrepTaintRequires): SemgrepTaintRequires
@@ -63,6 +67,8 @@ data class SemgrepTaintRule<PatternsRepr>(
     val propagators: List<SemgrepTaintPropagator<PatternsRepr>>,
     val sanitizers: List<SemgrepTaintSanitizer<PatternsRepr>>,
 ) : SemgrepRule<PatternsRepr> {
+    override val isEmpty: Boolean get() = sinks.isEmpty()
+
     override fun <NewRepr> transform(block: (PatternsRepr) -> NewRepr) =
         SemgrepTaintRule(
             sources = sources.map { it.updatePattern(block(it.pattern)) },
@@ -82,6 +88,8 @@ data class SemgrepTaintRule<PatternsRepr>(
 data class SemgrepMatchingRule<PatternsRepr>(
     val rules: List<PatternsRepr>,
 ) : SemgrepRule<PatternsRepr> {
+    override val isEmpty: Boolean get() = rules.isEmpty()
+
     override fun <NewRepr> transform(block: (PatternsRepr) -> NewRepr) =
         SemgrepMatchingRule(rules.map(block))
 

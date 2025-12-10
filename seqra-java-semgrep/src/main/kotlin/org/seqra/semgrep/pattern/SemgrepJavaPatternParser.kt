@@ -33,10 +33,13 @@ import org.seqra.semgrep.pattern.antlr.JavaParser.FormalParameterMetavarContext
 import org.seqra.semgrep.pattern.antlr.JavaParser.FormalParametersContext
 import org.seqra.semgrep.pattern.antlr.JavaParser.IdentifierContext
 import org.seqra.semgrep.pattern.antlr.JavaParser.ImportSemgrepPatternContext
+import org.seqra.semgrep.pattern.antlr.JavaParser.InterfaceCommonBodyDeclarationContext
+import org.seqra.semgrep.pattern.antlr.JavaParser.InterfaceDeclarationContext
 import org.seqra.semgrep.pattern.antlr.JavaParser.LiteralContext
 import org.seqra.semgrep.pattern.antlr.JavaParser.LocalTypeDeclarationContext
 import org.seqra.semgrep.pattern.antlr.JavaParser.LocalVariableDeclarationContext
 import org.seqra.semgrep.pattern.antlr.JavaParser.MemberReferenceExpressionContext
+import org.seqra.semgrep.pattern.antlr.JavaParser.MethodBodyContext
 import org.seqra.semgrep.pattern.antlr.JavaParser.MethodCallContext
 import org.seqra.semgrep.pattern.antlr.JavaParser.MethodDeclarationContext
 import org.seqra.semgrep.pattern.antlr.JavaParser.ModifierContext
@@ -435,9 +438,33 @@ private class SemgrepJavaPatternParserVisitor : JavaParserBaseVisitor<SemgrepJav
         val returnType = value(MethodDeclarationContext::typeTypeOrVoid).accept(typenameParser)
         val name = value(MethodDeclarationContext::identifier).parseName()
         val args = visitFormalParameters(value(MethodDeclarationContext::formalParameters))
-        val body = get(MethodDeclarationContext::methodBody)?.parse() ?: Ellipsis
+        val body = get(MethodDeclarationContext::methodBody).parseMethodBody()
+        val throws = get(MethodDeclarationContext::throwsList)
+        if (throws != null) {
+            // todo: throws ignored
+        }
 
         return MethodDeclaration(name, returnType, args, body, modifiers = emptyList())
+    }
+
+    override fun visitInterfaceCommonBodyDeclaration(ctx: InterfaceCommonBodyDeclarationContext): MethodDeclaration = ctx.withRule {
+        val returnType = value(InterfaceCommonBodyDeclarationContext::typeTypeOrVoid).accept(typenameParser)
+        val name = value(InterfaceCommonBodyDeclarationContext::identifier).parseName()
+        val args = visitFormalParameters(value(InterfaceCommonBodyDeclarationContext::formalParameters))
+        val body = get(InterfaceCommonBodyDeclarationContext::methodBody).parseMethodBody()
+
+        val throws = get(InterfaceCommonBodyDeclarationContext::throwsList)
+        if (throws != null) {
+            // todo: throws ignored
+        }
+
+        return MethodDeclaration(name, returnType, args, body, modifiers = emptyList())
+    }
+
+    private fun MethodBodyContext?.parseMethodBody(): SemgrepJavaPattern {
+        if (this == null) return Ellipsis
+        if (SEMI() != null) return Ellipsis
+        return block()?.parse() ?: Ellipsis
     }
 
     override fun visitConstructorDeclaration(ctx: ConstructorDeclarationContext): MethodDeclaration = ctx.withRule {
@@ -457,6 +484,21 @@ private class SemgrepJavaPatternParserVisitor : JavaParserBaseVisitor<SemgrepJav
         return ClassDeclaration(
             name = name,
             extends = extends,
+            implements = implements,
+            modifiers = emptyList(),
+            body = body
+        )
+    }
+
+    override fun visitInterfaceDeclaration(ctx: InterfaceDeclarationContext): ClassDeclaration = ctx.withRule {
+        val name = value(InterfaceDeclarationContext::identifier).parseName()
+        val body = get(InterfaceDeclarationContext::interfaceBody)?.parse() ?: Ellipsis
+        val implements = get(InterfaceDeclarationContext::interfaceExtends)
+            ?.typeType().orEmpty().map { it.accept(typenameParser) }
+
+        return ClassDeclaration(
+            name = name,
+            extends = null,
             implements = implements,
             modifiers = emptyList(),
             body = body
@@ -504,7 +546,7 @@ private class SemgrepJavaPatternParserVisitor : JavaParserBaseVisitor<SemgrepJav
 
     private fun RuleCtx<TypeDeclarationContext>.parseTypeDeclaration(): SemgrepJavaPattern {
         tryRule(TypeDeclarationContext::classDeclaration) { return it.parse() }
-        tryRule(TypeDeclarationContext::interfaceDeclaration) { it.todo() }
+        tryRule(TypeDeclarationContext::interfaceDeclaration) { return it.parse() }
         unreachable()
     }
 
@@ -610,7 +652,11 @@ private class SemgrepJavaPatternParserVisitor : JavaParserBaseVisitor<SemgrepJav
         tryRule(LiteralContext::ELLIPSIS_LITERAL) { return StringEllipsis }
         tryRule(LiteralContext::STRING_LITERAL) { return StringLiteral(ConcreteName(it.text.stringLiteralValue())) }
         tryRule(LiteralContext::NULL_LITERAL) { return NullLiteral }
-        tryRule(LiteralContext::integerLiteral) { return IntLiteral(it.text) }
+        tryRule(LiteralContext::integerLiteral) {
+            val intValue = it.text.toIntOrNull()
+                ?: ctx.parsingFailed("Unknown int literal")
+            return IntLiteral(intValue)
+        }
         tryRule(LiteralContext::BOOL_LITERAL) {
             return when (it.text) {
                 "true" -> BoolConstant(true)

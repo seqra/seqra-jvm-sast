@@ -11,17 +11,18 @@ import java.io.File
 
 class ProjectClasses(
     val cp: JIRClasspath,
-    private val projectPackage: String?,
     private val projectModulesFiles: Map<File, ProjectModuleClasses>
 ) {
     val locationProjectModules = hashMapOf<RegisteredLocation, ProjectModuleClasses>()
     val projectClasses = hashMapOf<RegisteredLocation, MutableSet<String>>()
 
-    val projectLocations: Set<RegisteredLocation>
+    val projectLocationsUnsafe: Set<RegisteredLocation>
         get() = projectClasses.keys
 
-    val dependenciesLocations: Set<RegisteredLocation>
-        get() = cp.registeredLocations.toHashSet() - projectLocations
+    fun isProjectClass(cls: JIRClassOrInterface): Boolean {
+        val module = locationProjectModules[cls.declaration.location] ?: return false
+        return isModuleClass(cls.name, module)
+    }
 
     fun loadProjectClasses() {
         cp.registeredLocations.forEach { loadProjectClassesFromLocation(it) }
@@ -38,12 +39,15 @@ class ProjectClasses(
         for (classSource in classSources) {
             val className = classSource.className
 
-            if (projectPackage != null && !className.startsWith(projectPackage)) {
-                continue
-            }
+            if (!isModuleClass(className, projectModule)) continue
 
             classes.add(className)
         }
+    }
+
+    private fun isModuleClass(className: String, module: ProjectModuleClasses): Boolean {
+        if (module.packages.isEmpty()) return true
+        return module.packages.any { className.startsWith(it) }
     }
 }
 

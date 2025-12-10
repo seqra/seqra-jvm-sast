@@ -6,6 +6,9 @@ import org.seqra.dataflow.configuration.jvm.serialized.SerializedCondition
 import org.seqra.dataflow.configuration.jvm.serialized.SerializedCondition.Companion.mkFalse
 import org.seqra.dataflow.configuration.jvm.serialized.SerializedFunctionNameMatcher
 import org.seqra.dataflow.configuration.jvm.serialized.SerializedNameMatcher
+import org.seqra.dataflow.configuration.jvm.serialized.SerializedTaintAssignAction
+import org.seqra.dataflow.configuration.jvm.serialized.SerializedTaintCleanAction
+import org.seqra.semgrep.pattern.Mark.GeneratedMark
 
 fun PositionBase.base(): PositionBaseWithModifiers =
     PositionBaseWithModifiers.BaseOnly(this)
@@ -18,7 +21,7 @@ fun SerializedFunctionNameMatcher.matchAnything(): Boolean =
     `class` == anyName() && `package` == anyName() && name == anyName()
 
 fun serializedConditionOr(args: List<SerializedCondition>): SerializedCondition {
-    val result = mutableListOf<SerializedCondition>()
+    val result = mutableSetOf<SerializedCondition>()
     for (arg in args) {
         if (arg is SerializedCondition.Or) {
             result.addAll(arg.anyOf)
@@ -35,6 +38,15 @@ fun serializedConditionOr(args: List<SerializedCondition>): SerializedCondition 
     return when (result.size) {
         0 -> mkFalse()
         1 -> result.single()
-        else -> SerializedCondition.Or(result)
+        else -> SerializedCondition.Or(result.toList())
     }
 }
+
+fun GeneratedMark.mkContainsMark(pos: PositionBaseWithModifiers) =
+    SerializedCondition.ContainsMark(taintMarkStr(), pos)
+
+fun GeneratedMark.mkAssignMark(pos: PositionBaseWithModifiers) =
+    SerializedTaintAssignAction(taintMarkStr(), pos = pos)
+
+fun GeneratedMark.mkCleanMark(pos: PositionBaseWithModifiers) =
+    SerializedTaintCleanAction(taintMarkStr(), pos = pos)

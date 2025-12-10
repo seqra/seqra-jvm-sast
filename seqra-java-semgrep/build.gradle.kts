@@ -5,6 +5,7 @@ import SeqraIrDependency.seqra_ir_core
 import SeqraIrDependency.seqra_ir_approximations
 import SeqraIrDependency.seqra_ir_api_storage
 import SeqraIrDependency.seqra_ir_storage
+import SeqraTestUtilDependency.seqraSastTestUtil
 
 plugins {
     id("kotlin-conventions")
@@ -41,6 +42,7 @@ dependencies {
 
     testCompileOnly(project("samples"))
     testImplementation("org.seqra.sast:dataflow")
+    testImplementation(seqraSastTestUtil)
 }
 
 val testSamples by configurations.creating

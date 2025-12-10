@@ -8,10 +8,12 @@ import org.seqra.semgrep.pattern.SemgrepErrorEntry.Reason
 import org.seqra.semgrep.pattern.conversion.IsMetavar
 import org.seqra.semgrep.pattern.conversion.ParamCondition
 import org.seqra.semgrep.pattern.conversion.ParamCondition.StringValueMetaVar
+import org.seqra.semgrep.pattern.conversion.SemgrepPatternAction.ClassConstraint
 import org.seqra.semgrep.pattern.conversion.SemgrepPatternAction.SignatureModifier
 import org.seqra.semgrep.pattern.conversion.SemgrepPatternAction.SignatureModifierValue
 import org.seqra.semgrep.pattern.conversion.SemgrepPatternAction.SignatureName
 import org.seqra.semgrep.pattern.conversion.SpecificBoolValue
+import org.seqra.semgrep.pattern.conversion.SpecificConstantValue
 import org.seqra.semgrep.pattern.conversion.SpecificStringValue
 import org.seqra.semgrep.pattern.conversion.TypeNamePattern
 import org.seqra.semgrep.pattern.conversion.automata.ClassModifierConstraint
@@ -184,7 +186,7 @@ private data class TaintEdgeDescriptor(
 
 private fun RuleConversionCtx.edgeDescriptor(edge: Edge): TaintEdgeDescriptor? = when (edge) {
     is Edge.AnalysisEnd -> {
-        semgrepRuleTrace.error("Unexpected analysis end edge", Reason.ERROR)
+        trace.error("Unexpected analysis end edge", Reason.ERROR)
         null
     }
 
@@ -300,10 +302,17 @@ private fun MetaVarCtx.methodSignatureMetaVars(signature: MethodSignature, metaV
 
 private fun MetaVarCtx.methodConstraintMetaVars(signature: MethodConstraint, metaVars: BitSet) {
     when (signature) {
-        is ClassModifierConstraint -> signatureModifierMetaVars(signature.modifier, metaVars)
+        is ClassModifierConstraint -> classConstraintMetaVars(signature.constraint, metaVars)
         is MethodModifierConstraint -> signatureModifierMetaVars(signature.modifier, metaVars)
         is NumberOfArgsConstraint -> {}
         is ParamConstraint -> paramConditionMetaVars(signature.condition, metaVars)
+    }
+}
+
+private fun MetaVarCtx.classConstraintMetaVars(signature: ClassConstraint, metaVars: BitSet) {
+    when (signature) {
+        is ClassConstraint.Signature -> signatureModifierMetaVars(signature.modifier, metaVars)
+        is ClassConstraint.TypeConstraint -> typeNameMetaVars(signature.superType, metaVars)
     }
 }
 
@@ -337,8 +346,7 @@ private fun MetaVarCtx.paramConditionMetaVars(pc: ParamCondition.Atom, metaVars:
         }
 
         ParamCondition.AnyStringLiteral,
-        is SpecificBoolValue,
-        is SpecificStringValue -> {
+        is SpecificConstantValue -> {
             // do nothing, no metavars
         }
     }

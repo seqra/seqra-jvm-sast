@@ -1,13 +1,14 @@
 package org.seqra.semgrep.util
 
 import base.RuleSample
+import org.seqra.dataflow.configuration.CommonTaintConfigurationSinkMeta.Severity
 import org.seqra.dataflow.configuration.jvm.serialized.SerializedItem
 import org.seqra.dataflow.configuration.jvm.serialized.SerializedTaintAssignAction
 import org.seqra.dataflow.configuration.jvm.serialized.SerializedTaintConfig
 import org.seqra.dataflow.configuration.jvm.serialized.SinkRule
 import org.seqra.dataflow.configuration.jvm.serialized.SourceRule
-import org.seqra.org.seqra.semgrep.pattern.Mark
-import org.seqra.semgrep.pattern.SemgrepFileLoadTrace
+import org.seqra.semgrep.pattern.Mark
+import org.seqra.semgrep.pattern.SemgrepLoadTrace
 import org.seqra.semgrep.pattern.SemgrepRuleLoader
 import org.seqra.semgrep.pattern.createTaintConfig
 import kotlin.io.path.Path
@@ -30,17 +31,17 @@ abstract class SampleBasedTest(
     ) {
         val data = sampleData[sampleClassName] ?: error("No sample data for $sampleClassName")
 
-        val trace = SemgrepFileLoadTrace(data.rulePath)
+        val trace = SemgrepLoadTrace()
         val loader = SemgrepRuleLoader()
-        loader.registerRuleSet(ruleSetText = data.rule, ruleSetName = data.rulePath, trace)
+        loader.registerRuleSet(ruleSetText = data.rule, ruleRelativePath = Path(data.rulePath), rulesRoot = Path("."), trace)
 
-        val loadedRules = loader.loadRules()
-        val (rule, ruleMeta) = loadedRules.singleOrNull()
+        val loadedRules = loader.loadRules(Severity.Note)
+        val (rule, _) = loadedRules.singleOrNull()
             ?: error("Not a single rule for ${data.rulePath}")
 
         val taintConfig = rule.createTaintConfig()
 
-        val stateVarExists = doesCreateStateVar(taintConfig, ruleMeta.path)
+        val stateVarExists = doesCreateStateVar(taintConfig)
         if (!expectStateVar && stateVarExists) {
             fail("Taint config has AssignAction that creates a state var, but `expectStateVar` was set to `false`!")
         }
@@ -109,14 +110,14 @@ abstract class SampleBasedTest(
         }?.flatten()
             ?: emptyList()
 
-    private fun doesCreateStateVar(taintConfig: SerializedTaintConfig, ruleId: String): Boolean {
+    private fun doesCreateStateVar(taintConfig: SerializedTaintConfig): Boolean {
         val allAssignActions = taintConfig.source.getAssigns() +
                 taintConfig.entryPoint.getAssigns() +
                 taintConfig.staticFieldSource.getAssigns() +
                 taintConfig.methodEntrySink.getAssigns() +
                 taintConfig.methodExitSink.getAssigns() +
                 taintConfig.sink.getAssigns()
-        return allAssignActions.any { Mark.getMarkFromString(it.kind, ruleId) is Mark.StateMark }
+        return allAssignActions.any { Mark.getMarkFromString(it.kind) is Mark.StateMark }
     }
 
     private val samplesDb by lazy { samplesDb() }
