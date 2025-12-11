@@ -1,3 +1,7 @@
+## 2025.12.11
+### fix: Resolve ambiguous source files issue
+- Fixes
+- Ambiguous source files
 ## 2025.12.10
 ### feat: Update CI, core, and project model; enhance dependency handling
 - Use dependencies from infra
