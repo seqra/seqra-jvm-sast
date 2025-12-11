@@ -77,6 +77,7 @@ import org.seqra.ir.api.jvm.JIRField
 import org.seqra.ir.api.jvm.JIRMethod
 import org.seqra.ir.api.jvm.PredefinedPrimitives
 import org.seqra.ir.api.jvm.TypeName
+import org.seqra.ir.api.jvm.ext.allSuperHierarchySequence
 import org.seqra.ir.api.jvm.ext.objectClass
 import org.seqra.ir.impl.cfg.util.isArray
 import org.seqra.ir.impl.util.adjustEmptyList
@@ -544,6 +545,12 @@ class TaintConfiguration(cp: JIRClasspath) {
             }
 
             if (normalizedTypeIs.match(posTypeName)) return mkTrue()
+
+            if (pos is This) {
+                if (method.enclosingClass.allSuperHierarchySequence.any { normalizedTypeIs.match(it.name) }) {
+                    return mkTrue()
+                }
+            }
         }
 
         val matcher = normalizedTypeIs.toConditionNameMatcher(patternManager)

@@ -1,4 +1,7 @@
 ## 2025.12.11
+### fix: Apply multiple bug fixes from issue #155
+- More fixes
+## 2025.12.11
 ### fix: Resolve ambiguous source files issue
 - Fixes
 - Ambiguous source files
