@@ -1,3 +1,36 @@
+## 2025.12.26
+### fix: resolve trace issues, optimize span resolver, and update SARIF handling
+- Remove unreachable trace roots
+- Fix trace resolver
+- Drop traces with unresolved inner calls
+- Add tags to spring related locations
+- Filter out reports with invalid traces
+- Update core
+- Fix semgrep style id
+- Fix join rules
+- Sarif uri base
+- Fix method entry span resolution for simple traces
+- Fix string literal matcher
+- Add fallback for unresolved spans
+- Fix arrays and phi assigns
+- Fix unchanged handling with alias
+- Fix span resolver
+- Optimize AST span resolver
+- Better SARIF generation progress reporting
+- Fix remove from complex position
+- Use type checker in accessor unroller
+- Set trace resolver limit
+- Sarif options
+- Rewrite source file resolver
+- Fix column resolution for fields, method declarations and method ends
+- Fix rule types
+- Fix vararg and method resolutions
+- Improve assign message folding and readability
+- Rule overrides
+- Use severity list instead of min severity
+- Fix spring controller paths
+- Fix transitive accept after end edge removal
+- Add snakeyaml and fastjson propagators
 ## 2025.12.11
 ### fix: Apply multiple bug fixes from issue #155
 - More fixes

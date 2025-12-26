@@ -22,6 +22,7 @@ import org.seqra.jvm.sast.project.rules.semgrepRulesWithDefaultConfig
 import org.seqra.jvm.sast.sarif.DebugFactReachabilitySarifGenerator
 import org.seqra.jvm.sast.sarif.SarifGenerator
 import org.seqra.jvm.sast.se.api.SastSeAnalyzer
+import org.seqra.jvm.sast.util.asSequenceWithProgress
 import org.seqra.jvm.sast.util.loadDefaultConfig
 import org.seqra.project.Project
 import org.seqra.semgrep.pattern.RuleMetadata
@@ -30,6 +31,7 @@ import java.nio.file.Path
 import kotlin.io.path.div
 import kotlin.io.path.inputStream
 import kotlin.io.path.outputStream
+import kotlin.time.Duration.Companion.seconds
 
 class ProjectAnalyzer(
     private val project: Project,
@@ -70,12 +72,23 @@ class ProjectAnalyzer(
     }
 
     private fun loadConfigFromSemgrepRules(cp: JIRClasspath): TaintRulesProvider {
-        val (semgrepRules, semgrepRulesMeta) = options.loadSemgrepRules()
-        ruleMetadatas += semgrepRulesMeta
-        return semgrepRules.semgrepRulesWithDefaultConfig(cp)
+        val loadedRules = options.loadSemgrepRules()
+        ruleMetadatas += loadedRules.rulesWithMeta.map { it.second }
+        return loadedRules.rulesWithMeta.map { it.first }.semgrepRulesWithDefaultConfig(cp)
     }
 
     private fun ProjectAnalysisContext.runAnalyzer(entryPoints: List<JIRMethod>) {
+        val analysisResult = runAnalyzerWithTraceResolver(entryPoints)
+        generateReportFromAnalysisResult(analysisResult)
+    }
+
+    private data class AnalysisResult(
+        val traces: List<VulnerabilityWithTrace>,
+        val seVerifiedTraces: List<VulnerabilityWithTrace>? = null,
+        val debugStatementsWithFact: Map<CommonInst, Set<FinalFactAp>>? = null
+    )
+
+    private fun ProjectAnalysisContext.runAnalyzerWithTraceResolver(entryPoints: List<JIRMethod>): AnalysisResult {
         val summarySerializationContext = JIRSummarySerializationContext(cp)
 
         val loadedConfig = loadTaintConfig(cp)
@@ -87,29 +100,21 @@ class ProjectAnalyzer(
             options = options.taintAnalyzerOptions(),
             summarySerializationContext = summarySerializationContext,
         ).use { analyzer ->
-            val sourcesResolver = project.sourceResolver(projectClasses)
-
             logger.info { "Start IFDS analysis for project: ${project.sourceRoot}" }
             val traces = analyzer.analyzeWithIfds(entryPoints)
             logger.info { "Finish IFDS analysis for project: ${project.sourceRoot}" }
 
-            (resultDir / "report-ifds.sarif").outputStream().use {
-                generateSarifReportFromTraces(it, sourcesResolver, traces)
-            }
+            var result = AnalysisResult(traces)
 
             if (options.debugOptions?.factReachabilitySarif == true) {
                 val stmtsWithFact = analyzer.statementsWithFacts()
-                (resultDir / "debug-ifds-fact-reachability.sarif").outputStream().use {
-                    generateFactReachabilityReport(it, sourcesResolver, stmtsWithFact)
-                }
+                result = result.copy(debugStatementsWithFact = stmtsWithFact)
             }
 
-            logger.info { "Finish IFDS analysis report for project: ${project.sourceRoot}" }
-
-            if (!options.useSymbolicExecution) return
+            if (!options.useSymbolicExecution) return result
 
             val seAnalyzer = SastSeAnalyzer.createSeEngine<TaintAnalysisUnitRunnerManager, VulnerabilityWithTrace>()
-                ?: return
+                ?: return result
 
             logger.info { "Start SE for project: ${project.sourceRoot}" }
             val verifiedTraces = seAnalyzer.analyzeTraces(
@@ -118,12 +123,35 @@ class ProjectAnalyzer(
             )
             logger.info { "Finish SE for project: ${project.sourceRoot}" }
 
-            (resultDir / "report-se.sarif").outputStream().use {
-                generateSarifReportFromTraces(it, sourcesResolver, verifiedTraces)
-            }
+            result = result.copy(seVerifiedTraces = verifiedTraces)
 
-            logger.info { "Finish SE report for project: ${project.sourceRoot}" }
+            return result
         }
+    }
+
+    private fun ProjectAnalysisContext.generateReportFromAnalysisResult(result: AnalysisResult) {
+        logger.info { "Start SARIF report generation for project: ${project.sourceRoot}" }
+
+        val sourcesResolver = project.sourceResolver(projectClasses)
+
+        (resultDir / options.sarifGenerationOptions.sarifFileName).outputStream().use {
+            generateSarifReportFromTraces(it, sourcesResolver, result.traces)
+        }
+
+        result.debugStatementsWithFact?.let { stmtsWithFact ->
+            (resultDir / "debug-ifds-fact-reachability.sarif").outputStream().use {
+                generateFactReachabilityReport(it, sourcesResolver, stmtsWithFact)
+            }
+        }
+
+        result.seVerifiedTraces?.let { seVerifiedTraces ->
+            val reportName = options.sarifGenerationOptions.sarifFileName + ".se-verified.sarif"
+            (resultDir / reportName).outputStream().use {
+                generateSarifReportFromTraces(it, sourcesResolver, seVerifiedTraces)
+            }
+        }
+
+        logger.info { "Finish SARIF report for project: ${project.sourceRoot}" }
     }
 
     private fun ProjectAnalysisContext.generateSarifReportFromTraces(
@@ -131,8 +159,16 @@ class ProjectAnalyzer(
         sourceFileResolver: SourceFileResolver<CommonInst>,
         traces: List<VulnerabilityWithTrace>
     ) {
-        val generator = SarifGenerator(sourceFileResolver, JIRSarifTraits(cp))
-        generator.generateSarif(output, traces.asSequence(), ruleMetadatas)
+        val generator = SarifGenerator(
+            options.sarifGenerationOptions, project.sourceRoot,
+            sourceFileResolver, JIRSarifTraits(cp)
+        )
+
+        val tracesWithProgress = traces.asSequenceWithProgress(10.seconds) { taken, overall ->
+            logger.info { "Generated ${taken - 1}/${overall} sarif traces" }
+        }
+
+        generator.generateSarif(output, tracesWithProgress, ruleMetadatas)
         logger.info { "Sarif trace generation stats: ${generator.traceGenerationStats}" }
     }
 
@@ -141,7 +177,10 @@ class ProjectAnalyzer(
         sourceFileResolver: SourceFileResolver<CommonInst>,
         reachableFacts: Map<CommonInst, Set<FinalFactAp>>,
     ) {
-        val generator = DebugFactReachabilitySarifGenerator(sourceFileResolver, JIRSarifTraits(cp))
+        val generator = DebugFactReachabilitySarifGenerator(
+            options.sarifGenerationOptions,
+            sourceFileResolver, JIRSarifTraits(cp)
+        )
         generator.generateSarif(output, reachableFacts)
     }
 

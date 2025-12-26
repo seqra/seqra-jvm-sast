@@ -1,6 +1,5 @@
 package org.seqra.semgrep.pattern
 
-import mu.KLogging
 import org.seqra.dataflow.ap.ifds.TaintMarkAccessor
 import org.seqra.dataflow.ap.ifds.access.InitialFactAp
 import org.seqra.semgrep.pattern.conversion.MetavarAtom
@@ -68,8 +67,6 @@ sealed interface Mark {
             return GeneratedMark(rid, rc, vs, v)
         }
 
-        private val logger = object : KLogging() {}.logger
-
         fun getMarkFromString(rawMark: String): Mark {
             val mark = tryParseMark(rawMark)
                 ?: return StringMark(rawMark) // running with config
@@ -94,9 +91,6 @@ sealed interface Mark {
 
         fun InitialFactAp.getMark(): Mark {
             val taintMarks = getAllAccessors().filterIsInstance<TaintMarkAccessor>()
-            if (taintMarks.size != 1) {
-                logger.error { "Expected exactly one taint mark but got ${taintMarks.size}!" }
-            }
             if (taintMarks.isEmpty()) {
                 return TaintMark
             }

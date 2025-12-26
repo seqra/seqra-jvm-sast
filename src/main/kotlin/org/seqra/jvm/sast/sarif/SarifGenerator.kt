@@ -1,5 +1,6 @@
 package org.seqra.jvm.sast.sarif
 
+import io.github.detekt.sarif4k.ArtifactLocation
 import io.github.detekt.sarif4k.CodeFlow
 import io.github.detekt.sarif4k.Level
 import io.github.detekt.sarif4k.Location
@@ -15,21 +16,35 @@ import org.seqra.dataflow.ap.ifds.trace.MethodTraceResolver
 import org.seqra.dataflow.ap.ifds.trace.TraceResolver
 import org.seqra.dataflow.ap.ifds.trace.VulnerabilityWithTrace
 import org.seqra.dataflow.configuration.CommonTaintConfigurationSinkMeta.Severity
+import org.seqra.dataflow.configuration.jvm.TaintMethodEntrySink
+import org.seqra.dataflow.jvm.util.JIRSarifTraits
 import org.seqra.dataflow.sarif.SourceFileResolver
 import org.seqra.dataflow.util.SarifTraits
 import org.seqra.ir.api.common.CommonMethod
+import org.seqra.ir.api.common.cfg.CommonAssignInst
 import org.seqra.ir.api.common.cfg.CommonInst
-import org.seqra.ir.api.jvm.JIRMethod
-import org.seqra.ir.api.jvm.cfg.JIRRawLineNumberInst
-import org.seqra.jvm.sast.project.spring.annotateSarifWithSpringRelatedInformation
+import org.seqra.ir.api.jvm.cfg.JIRArrayAccess
+import org.seqra.ir.api.jvm.cfg.JIRFieldRef
+import org.seqra.ir.api.jvm.cfg.JIRRef
+import org.seqra.ir.api.jvm.cfg.JIRValue
+import org.seqra.jvm.sast.JIRSourceFileResolver
+import org.seqra.jvm.sast.ast.JavaAstSpanResolver
+import org.seqra.jvm.sast.project.SarifGenerationOptions
+import org.seqra.jvm.sast.project.spring.SpringAnnotator
 import org.seqra.semgrep.pattern.RuleMetadata
 import java.io.OutputStream
+import java.nio.file.Path
+import kotlin.io.path.absolutePathString
 
 class SarifGenerator(
+    private val options: SarifGenerationOptions,
+    private val sourceRoot: Path?,
     sourceFileResolver: SourceFileResolver<CommonInst>,
     private val traits: SarifTraits<CommonMethod, CommonInst>
 ) {
-    private val locationResolver = LocationResolver(sourceFileResolver, traits)
+    private val spanResolver = JavaAstSpanResolver(traits as JIRSarifTraits)
+    private val locationResolver = LocationResolver(sourceFileResolver, traits, spanResolver)
+    private val springAnnotator = SpringAnnotator(sourceFileResolver as JIRSourceFileResolver, spanResolver)
 
     private val json = Json {
         prettyPrint = true
@@ -51,8 +66,15 @@ class SarifGenerator(
         metadatas: List<RuleMetadata>
     ) {
         val sarifResults = traces.map { generateSarifResult(it.vulnerability, it.trace) }
+
+        val uriBase = options.uriBase ?: sourceRoot?.absolutePathString()
+        val sourceUri = uriBase?.let {
+            mapOf(SarifGenerationOptions.LOCATION_URI to ArtifactLocation(uri = it))
+        }
+
         val run = LazyToolRunReport(
-            tool = generateSarifAnalyzerToolDescription(metadatas),
+            tool = generateSarifAnalyzerToolDescription(metadatas, options),
+            originalURIBaseIDS = sourceUri,
             results = sarifResults,
         )
 
@@ -73,24 +95,27 @@ class SarifGenerator(
             Severity.Error -> Level.Error
         }
 
-        val sinkLocation = statementLocation(vulnerability.statement)
+        val sinkType = if (vulnerabilityRule is TaintMethodEntrySink) LocationType.RuleMethodEntry else LocationType.Simple
+        val sinkLocation = statementLocation(vulnerability.statement, sinkType)
 
-        val codeFlow = generateCodeFlow(trace, vulnerabilityRule.meta.message)
+        val tracePaths = generateTracePaths(trace).orEmpty()
+
+        val threadFlows = tracePaths.map { generateThreadFlow(it, vulnerabilityRule.meta.message) }
 
         var result = Result(
-            ruleID = ruleId,
+            ruleID = options.formatRuleId(ruleId),
             message = ruleMessage,
             level = level,
             locations = listOfNotNull(sinkLocation),
-            codeFlows = listOfNotNull(codeFlow)
+            codeFlows = listOfNotNull(CodeFlow(threadFlows = threadFlows))
         )
-        result = annotateSarifWithSpringRelatedInformation(result, vulnerability, trace) { s ->
-            statementLocation(s)
+        result = springAnnotator.annotateSarifWithSpringRelatedInformation(result, vulnerability, trace, tracePaths) { s ->
+            statementLocation(s, LocationType.SpringRelated)
         }
         return result
     }
 
-    private fun generateCodeFlow(trace: TraceResolver.Trace?, sinkMessage: String): CodeFlow? {
+    private fun generateTracePaths(trace: TraceResolver.Trace?): List<List<TracePathNode>>? {
         traceGenerationStats.total++
 
         if (trace == null) {
@@ -116,8 +141,12 @@ class SarifGenerator(
             }
         }
 
-        val threadFlows = paths.map { generateThreadFlow(it, sinkMessage) }
-        return CodeFlow(threadFlows = threadFlows)
+        var limitedTracePaths = paths
+        if (options.sarifThreadFlowLimit != null) {
+            limitedTracePaths = paths.take(options.sarifThreadFlowLimit)
+        }
+
+        return limitedTracePaths
     }
 
     private fun areTracesRelative(a: TracePathNode, b: TracePathNode): Boolean {
@@ -145,16 +174,51 @@ class SarifGenerator(
         return result
     }
 
+    private fun MethodTraceResolver.TraceEntry?.isSimpleAssign(): Boolean =
+        this is MethodTraceResolver.TraceEntry.Action
+                && primaryAction is MethodTraceResolver.TraceEntryAction.Sequential
+                && otherActions.isEmpty()
+
     private fun isRepetitionOfAssign(a: List<TracePathNode>, b: List<TracePathNode>): Boolean {
         if (a.size != 1 || b.size != 1) return false
         val aNode = a[0]
         val bNode = b[0]
-        if (aNode.entry !is MethodTraceResolver.TraceEntry.Action
-            || bNode.entry !is MethodTraceResolver.TraceEntry.Action)
+
+        if (!aNode.entry.isSimpleAssign() || !bNode.entry.isSimpleAssign())
             return false
-        val aAssignee = traits.getReadableAssignee(aNode.statement)
-        val bAssignee = traits.getReadableAssignee(bNode.statement)
+
+        val aAssignee = traits.getReadableAssignee(aNode.statement) ?: return false
+        val bAssignee = traits.getReadableAssignee(bNode.statement) ?: return false
         return aAssignee == bAssignee
+    }
+
+    private fun isFieldReassign(fst: TracePathNode, snd: TracePathNode): Boolean {
+        if (!fst.entry.isSimpleAssign() || !snd.entry.isSimpleAssign())
+            return false
+        if (fst.statement !is CommonAssignInst || snd.statement !is CommonAssignInst)
+            return false
+        val base = fst.statement.lhv
+        val field = snd.statement.rhv
+        if (base !is JIRValue || field !is JIRRef)
+            return false
+        return when (field) {
+            is JIRFieldRef -> base == field.instance
+            is JIRArrayAccess -> base == field.array
+            else -> false
+        }
+    }
+
+    private fun removeFieldReassigns(group: List<TracePathNode>): List<TracePathNode> {
+        if (group.size < 2) return group
+        val result = mutableListOf<TracePathNode>()
+        var prev = group[0]
+        for (cur in group.drop(1)) {
+            if (!isFieldReassign(prev, cur))
+                result.add(prev)
+            prev = cur
+        }
+        result.add(prev)
+        return result
     }
 
     private fun removeRepetitiveAssigns(groups: List<List<TracePathNode>>): List<List<TracePathNode>> {
@@ -178,9 +242,6 @@ class SarifGenerator(
         return result.reversed()
     }
 
-    private fun JIRMethod.getFirstLine(): Int? =
-        rawInstList.firstOrNull { it is JIRRawLineNumberInst } ?.let { (it as JIRRawLineNumberInst).lineNumber }
-
     private fun TracePathNode.isRewriteAllowed(builder: TraceMessageBuilder) = with (builder) {
         !isInsideLambda() && (entry is MethodTraceResolver.TraceEntry.MethodEntry || entry.isPureEntryPoint())
     }
@@ -189,53 +250,42 @@ class SarifGenerator(
         val messageBuilder = TraceMessageBuilder(traits, sinkMessage, path)
         val filteredLocations = path.filter { messageBuilder.isGoodTrace(it) }
         val groupedLocations = groupRelativeTraces(filteredLocations)
-        val filteredGroups = removeRepetitiveAssigns(groupedLocations)
+        val noReassigns = groupedLocations.map { removeFieldReassigns(it) }
+        val filteredGroups = removeRepetitiveAssigns(noReassigns)
         val groupsWithMsges = messageBuilder.createGroupTraceMessages(filteredGroups)
         val flowLocations = groupsWithMsges.map { groupNode ->
             val inst = groupNode.node.statement
-            val rewriteLine =
-                if (groupNode.node.isRewriteAllowed(messageBuilder)) {
-                    // this is an attempt to highlight the method signature instead of its first bytecode instruction
-                    // for the MethodEntry traces
-                    // will be wrong if the source has extra lines between method declaration and its body
-                    // (i.e. blank lines, extra parameter indentation, or comments)
-                    val firstLine = (groupNode.node.statement.location.method as JIRMethod).getFirstLine()
-                    if (firstLine == null) {
-                        logger.warn { "Could not find first raw line number for method ${inst.location.method.name}!" }
-                        traits.lineNumber(inst)
-                    }
-                    else {
-                        firstLine - 1
-                    }
-                }
-                else null
+            val rewriteLine = groupNode.node.isRewriteAllowed(messageBuilder)
 
             IntermediateLocation(
                 inst = inst,
                 info = getInstructionInfo(inst, rewriteLine),
                 kind = groupNode.kind,
+                type = if (groupNode.isMultiple) LocationType.Multiple else LocationType.Simple,
                 message = groupNode.message,
+                node = if (!groupNode.isMultiple) groupNode.node else null,
             )
         }
 
         return ThreadFlow(locations = locationResolver.resolve(flowLocations))
     }
 
-    private fun getInstructionInfo(statement: CommonInst, rewriteLine: Int? = null): InstructionInfo = with(traits) {
+    private fun getInstructionInfo(statement: CommonInst, rewriteLine: Boolean = false): InstructionInfo = with(traits) {
         InstructionInfo(
             fullyQualified = locationFQN(statement),
             machineName = locationMachineName(statement),
-            lineNumber = rewriteLine ?: lineNumber(statement),
-            noExtraResolve = rewriteLine != null
+            lineNumber = lineNumber(statement),
+            noExtraResolve = rewriteLine
         )
     }
 
-    private fun statementLocation(statement: CommonInst): Location {
+    private fun statementLocation(statement: CommonInst, type: LocationType): Location {
         val loc = IntermediateLocation(
             inst = statement,
             info = getInstructionInfo(statement),
             kind = "",
-            message = null
+            message = null,
+            type = type,
         )
         return locationResolver.generateSarifLocation(loc)
     }

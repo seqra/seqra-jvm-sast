@@ -135,20 +135,37 @@ private fun resolveCallPath(
 ): List<TracePathNode> {
     val path = mutableListOf<TracePathNode>()
     for (node in callPath) {
-        if (node is TraceEntry.Action && node.primaryAction is TraceEntryAction.CallSummary && node.statement !in stack) {
-            val innerTrace = trace.findSuccessors(traceNode, CallInnerTrace, node.statement)
-                .map { it.node }.filterIsInstance<TraceResolver.InterProceduralFullTraceNode>().firstOrNull()
-            if (innerTrace != null) {
-                path += TracePathNode(node.statement, TracePathNodeKind.CALL, node)
-                val innerPath = generateIntraProceduralPath(innerTrace.trace).orEmpty()
-                val newStack = HashSet<CommonInst>(stack)
-                newStack.add(node.statement)
-                path += resolveCallPath(trace, innerTrace, innerPath, newStack)
+        if (node.statement !in stack) {
+            val innerTraces = trace.findInnerCallEntries(traceNode, node)
+            if (innerTraces != null) {
+                val innerTrace = innerTraces.map { it.node }
+                    .filterIsInstance<TraceResolver.InterProceduralFullTraceNode>()
+                    .firstOrNull()
+
+                if (innerTrace != null) {
+                    path += TracePathNode(node.statement, TracePathNodeKind.CALL, node)
+                    val innerPath = generateIntraProceduralPath(innerTrace.trace).orEmpty()
+                    val newStack = HashSet<CommonInst>(stack)
+                    newStack.add(node.statement)
+                    path += resolveCallPath(trace, innerTrace, innerPath, newStack)
+                }
             }
         }
         path += TracePathNode(node.statement, TracePathNodeKind.OTHER, node)
     }
     return path
+}
+
+private fun SourceToSinkTrace.findInnerCallEntries(
+    traceNode: InterProceduralTraceNode,
+    node: TraceEntry
+): List<TraceResolver.InterProceduralCall>? {
+    if (node !is TraceEntry.Action) return null
+
+    val action = node.primaryAction
+    if (action !is TraceEntryAction.CallSummary) return null
+
+    return findSuccessors(traceNode, CallInnerTrace, node.statement, action.summaryTrace)
 }
 
 data class CallTrace(
@@ -244,11 +261,12 @@ private fun resolveStartToSink(
 private fun generateIntraProceduralPath(
     trace: MethodTraceResolver.FullTrace
 ): PersistentList<TraceEntry>? {
-    val unprocessed = mutableListOf<Pair<TraceEntry, PersistentList<TraceEntry>>>(trace.startEntry to persistentListOf<TraceEntry>(trace.startEntry))
+    val unprocessed = ArrayDeque<Pair<TraceEntry, PersistentList<TraceEntry>>>()
+    unprocessed.addFirst(trace.startEntry to persistentListOf<TraceEntry>(trace.startEntry))
     val visited = hashSetOf<TraceEntry>()
 
     while (unprocessed.isNotEmpty()) {
-        val (entry, path) = unprocessed.removeLast()
+        val (entry, path) = unprocessed.removeFirst()
 
         if (entry == trace.final) {
             return path
@@ -257,7 +275,7 @@ private fun generateIntraProceduralPath(
         if (!visited.add(entry)) continue
 
         trace.successors[entry]?.forEach {
-            unprocessed.add(it to path.add(it))
+            unprocessed.addLast(it to path.add(it))
         }
     }
 

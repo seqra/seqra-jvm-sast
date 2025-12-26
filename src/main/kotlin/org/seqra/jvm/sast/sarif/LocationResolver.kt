@@ -10,6 +10,7 @@ import io.github.detekt.sarif4k.ThreadFlowLocation
 import mu.KLogging
 import org.objectweb.asm.MethodVisitor
 import org.objectweb.asm.Opcodes
+import org.seqra.dataflow.jvm.util.JIRSarifTraits
 import org.seqra.dataflow.sarif.SourceFileResolver
 import org.seqra.dataflow.util.SarifTraits
 import org.seqra.ir.api.common.CommonMethod
@@ -24,6 +25,7 @@ import org.seqra.ir.api.jvm.cfg.JIRRawLineNumberInst
 import org.seqra.ir.impl.features.classpaths.virtual.JIRVirtualClass
 import org.seqra.jvm.sast.ast.JavaAstSpanResolver
 import org.seqra.jvm.sast.mostOuterClass
+import org.seqra.jvm.sast.project.SarifGenerationOptions
 import org.seqra.jvm.sast.util.DebugInfo
 import org.seqra.jvm.sast.util.DebugInfoParser
 import org.seqra.jvm.sast.util.SourcePosition
@@ -41,20 +43,25 @@ data class InstructionInfo(
     val noExtraResolve: Boolean = false
 )
 
+enum class LocationType {
+    Simple, Multiple, RuleMethodEntry, SpringRelated,
+}
+
 data class IntermediateLocation(
     val inst: CommonInst,
     val info: InstructionInfo,
     val kind: String,
     val message: String?,
+    val type: LocationType,
     val span: LocationSpan? = null,
+    val node: TracePathNode? = null,
 )
 
 class LocationResolver(
     private val sourceFileResolver: SourceFileResolver<CommonInst>,
-    private val traits: SarifTraits<CommonMethod, CommonInst>
+    private val traits: SarifTraits<CommonMethod, CommonInst>,
+    private val spanResolver: JavaAstSpanResolver
 ) {
-    private val spanResolver = JavaAstSpanResolver()
-
     fun resolve(locations: List<IntermediateLocation>): List<ThreadFlowLocation> {
         var currentIdx = 0
         return locations.flatMap { loc -> resolveLocation(loc, currentIdx).also { currentIdx += it.size } }
@@ -252,9 +259,9 @@ class LocationResolver(
         location.info.fullyQualified.split('#').firstOrNull()?.replace('.', '/')
             ?: "<#[unresolved]#>"
 
-    private fun computeSpan(inst: CommonInst, lineNumber: Int, sourceFile: Path): LocationSpan? {
-        if (inst !is JIRInst) return null
-        return spanResolver.computeSpan(sourceFile, lineNumber, inst)
+    private fun computeSpan(location: IntermediateLocation, sourceFile: Path): LocationSpan? {
+        if (location.inst !is JIRInst || location.type == LocationType.SpringRelated) return null
+        return spanResolver.computeSpan(sourceFile, location)
     }
 
     private fun generateSarifLocation(
@@ -262,7 +269,7 @@ class LocationResolver(
         sourceFile: Path?
     ): Location {
         val span = location.span ?: sourceFile?.let { src ->
-            computeSpan(location.inst, location.info.lineNumber, src)
+            computeSpan(location, src)
         }
         val region = if (span != null) {
             Region(
@@ -282,7 +289,10 @@ class LocationResolver(
 
         return Location(
             physicalLocation = PhysicalLocation(
-                artifactLocation = ArtifactLocation(uri = fileLocation),
+                artifactLocation = ArtifactLocation(
+                    uri = fileLocation,
+                    uriBaseID = SarifGenerationOptions.LOCATION_URI
+                ),
                 region = region
             ),
             logicalLocations = listOf(
@@ -326,7 +336,8 @@ class LocationResolver(
             inst = initialLocation.inst,
             info = initialLocation.info.copy(lineNumber = call.callLocation.lineNumber),
             kind = "call",
-            message = "Inline ${call.methodName} inserted"
+            message = "Inline ${call.methodName} inserted",
+            type = LocationType.Simple,
         ).let { generateThreadFlowLocation(it, call.callLocation.sourceFile, idx) }
         // if it's lambda, keep the original line; otherwise, try to highlight method declaration,
         // just as with MethodEntry case
@@ -335,7 +346,8 @@ class LocationResolver(
             inst = initialLocation.inst,
             info = initialLocation.info.copy(lineNumber = call.methodLocation.lineNumber + methodStartLineFix),
             kind = "unknown",
-            message = "Inlined body of ${call.methodName} entered"
+            message = "Inlined body of ${call.methodName} entered",
+            type = LocationType.Simple,
         ).let { generateThreadFlowLocation(it, call.methodLocation.sourceFile, idx + 1)}
         return listOf(callFlow, methodFlow)
     }
@@ -347,7 +359,6 @@ class LocationResolver(
             val source = getCachedSourceLocation(location.inst)
             if (source == null) {
                 logger.warn { "Source file for ${location.info.fullyQualified} not found!" }
-//                return emptyList()
             }
             return listOf(generateThreadFlowLocation(location, source, startIdx))
         }

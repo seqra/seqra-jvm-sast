@@ -5,11 +5,8 @@ import kotlinx.serialization.json.Json
 import mu.KLogging
 import org.seqra.dataflow.configuration.CommonTaintConfigurationSinkMeta.Severity
 import org.seqra.jvm.sast.project.ProjectAnalysisOptions
-import org.seqra.org.seqra.semgrep.pattern.convertToOldErrorsFormat
-import org.seqra.semgrep.pattern.RuleMetadata
 import org.seqra.semgrep.pattern.SemgrepLoadTrace
 import org.seqra.semgrep.pattern.SemgrepRuleLoader
-import org.seqra.semgrep.pattern.TaintRuleFromSemgrep
 import java.nio.file.Path
 import kotlin.io.path.extension
 import kotlin.io.path.outputStream
@@ -19,9 +16,9 @@ import kotlin.io.path.walk
 
 private val logger = object : KLogging() {}.logger
 
-fun ProjectAnalysisOptions.loadSemgrepRules(): Pair<List<TaintRuleFromSemgrep>, List<RuleMetadata>> {
+fun ProjectAnalysisOptions.loadSemgrepRules(): SemgrepRuleLoader.RuleLoadResult {
     val trace = SemgrepLoadTrace()
-    val semgrepRules = parseSemgrepRules(semgrepRuleSet, semgrepMinSeverity, trace)
+    val semgrepRules = parseSemgrepRules(semgrepRuleSet, semgrepSeverity, trace)
 
     val compressedTrace by lazy { trace.compressed() }
     semgrepRuleLoadTrace?.let { traceFile ->
@@ -38,30 +35,14 @@ fun ProjectAnalysisOptions.loadSemgrepRules(): Pair<List<TaintRuleFromSemgrep>, 
         }
     }
 
-    // todo: remove after seqra-cli update
-    semgrepRuleLoadErrors?.let { traceFile ->
-        runCatching {
-            val oldErrorsFormat = compressedTrace.convertToOldErrorsFormat()
-            val prettyJson = Json {
-                prettyPrint = true
-            }
-            traceFile.outputStream().bufferedWriter().use { writer ->
-                writer.write(prettyJson.encodeToString(oldErrorsFormat))
-            }
-            logger.info { "Wrote semgrep load errors to $traceFile" }
-        }.onFailure { ex ->
-            logger.error(ex) { "Failed to write semgrep load errors to $traceFile: ${ex.message}" }
-        }
-    }
-
     return semgrepRules
 }
 
 private fun parseSemgrepRules(
     semgrepRulesPath: List<Path>,
-    semgrepMinSeverity: Severity,
+    semgrepSeverity: List<Severity>,
     semgrepTrace: SemgrepLoadTrace
-): Pair<List<TaintRuleFromSemgrep>, List<RuleMetadata>> {
+): SemgrepRuleLoader.RuleLoadResult {
     val loader = SemgrepRuleLoader()
 
     val ruleExtensions = arrayOf("yaml", "yml")
@@ -72,9 +53,9 @@ private fun parseSemgrepRules(
         }
     }
 
-    val rulesWithMetaData = loader.loadRules(semgrepMinSeverity).unzip()
+    val loadedRules = loader.loadRules(semgrepSeverity)
 
-    logger.info { "Total loaded ${rulesWithMetaData.first.sumOf { it.size }} rules" }
+    logger.info { "Total loaded ${loadedRules.rulesWithMeta.sumOf { it.first.size }} rules" }
 
-    return rulesWithMetaData
+    return loadedRules
 }

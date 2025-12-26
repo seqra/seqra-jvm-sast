@@ -16,6 +16,8 @@ import org.seqra.semgrep.pattern.conversion.SemgrepPatternAction
 import org.seqra.semgrep.pattern.conversion.TypeNamePattern
 import org.seqra.semgrep.pattern.conversion.automata.AutomataNode
 import org.seqra.semgrep.pattern.conversion.automata.MethodConstraint
+import org.seqra.semgrep.pattern.conversion.automata.MethodEnclosingClassName
+import org.seqra.semgrep.pattern.conversion.automata.MethodSignature
 import org.seqra.semgrep.pattern.conversion.automata.ParamConstraint
 import org.seqra.semgrep.pattern.conversion.automata.Position
 import org.seqra.semgrep.pattern.conversion.automata.Predicate
@@ -486,7 +488,7 @@ private fun RuleConversionCtx.removeMeaningLessEdges(
     }
 
     if (removedEdgesToAccept.isNotEmpty()) {
-        trace.error("Edges without positive predicate: ${removedEdgesToAccept.size}", Reason.ERROR)
+        trace.error("Edges without positive predicate: ${removedEdgesToAccept.size}", Reason.WARNING)
     }
 
     return automata.copy(successors = successors)
@@ -672,9 +674,110 @@ private fun cleanupAutomata(
     metaVarInfo: ResolvedMetaVarInfo,
 ): TaintRegisterStateAutomata {
     val withoutRedundantEnd = removeEndEdge(automata)
-    val withoutDummyEntry = tryRemoveDummyMethodEntry(withoutRedundantEnd, metaVarInfo)
+    val withAcceptFixed = removeTransitiveAccept(withoutRedundantEnd)
+    val withoutDummyEntry = tryRemoveDummyMethodEntry(withAcceptFixed, metaVarInfo)
     val withoutDummyCleaners = removeDummyCleaner(withoutDummyEntry)
-    return withoutDummyCleaners
+    val withEnterExitFix = fixEntryExitSequence(withoutDummyCleaners)
+    return withEnterExitFix
+}
+
+private fun fixEntryExitSequence(automata: TaintRegisterStateAutomata): TaintRegisterStateAutomata {
+    val replacement = mutableListOf<Pair<Pair<Edge, State>, List<Pair<Edge, State>>>>()
+
+    outer@ for ((enterEdge, initialSucc) in automata.successors[automata.initial].orEmpty()) {
+        if (enterEdge !is Edge.MethodEnter) continue
+
+        if (initialSucc.register != automata.initial.register) continue
+        if (enterEdge.condition.readMetaVar.isNotEmpty()) continue
+        if (!enterEdge.effect.hasNoEffect()) continue
+
+        if (initialSucc in automata.finalAcceptStates || initialSucc in automata.finalDeadStates) {
+            continue
+        }
+
+        val nextSuccessors = automata.successors[initialSucc] ?: continue
+
+        val exits = nextSuccessors.map { it.first }.filterIsInstance<Edge.MethodExit>()
+        if (exits.isEmpty() || exits.size != nextSuccessors.size) continue
+
+        val enterEdgeReplacement = nextSuccessors.map { (edge, dst) ->
+            edge as Edge.MethodExit
+
+            val positiveSig = enterEdge.condition.other.firstOrNull { !it.negated }?.predicate?.signature
+            val cond = edge.condition.combineWitEnterCondition(enterEdge.condition, positiveSig)
+            val effect = edge.effect.combineWitEnterCondition(positiveSig)
+            val modifiedExit = Edge.MethodExit(cond, effect)
+
+            modifiedExit to dst
+        }
+
+        replacement.add((enterEdge to initialSucc) to enterEdgeReplacement)
+    }
+
+    if (replacement.isEmpty()) return automata
+
+    val successors = automata.successors.toMutableMap()
+    val mutableInitial = successors[automata.initial].orEmpty().toMutableSet()
+    replacement.forEach {
+        mutableInitial.remove(it.first)
+        successors.remove(it.first.second)
+        mutableInitial.addAll(it.second)
+    }
+    successors[automata.initial] = mutableInitial
+
+    return automata.copy(successors = successors)
+}
+
+private fun EdgeCondition.combineWitEnterCondition(enterCond: EdgeCondition, positiveSig: MethodSignature?): EdgeCondition {
+    check(enterCond.readMetaVar.isEmpty())
+
+    if (positiveSig == null) return copy(other = this.other + enterCond.other)
+
+    val rmv = readMetaVar.mapValues { (_, values) ->
+        values.map { it.replaceSignatureIfAny(positiveSig) }
+    }
+
+    val other = this.other.map { it.replaceSignatureIfAny(positiveSig) }
+
+    return EdgeCondition(rmv, other = other + enterCond.other)
+}
+
+private fun EdgeEffect.combineWitEnterCondition(positiveSig: MethodSignature?): EdgeEffect {
+    if (positiveSig == null) return this
+
+    val amv = assignMetaVar.mapValues { (_, values) ->
+        values.map { it.replaceSignatureIfAny(positiveSig) }
+    }
+    return EdgeEffect(amv)
+}
+
+private fun MethodPredicate.replaceSignatureIfAny(newSig: MethodSignature): MethodPredicate {
+    val thisSig = predicate.signature
+    if (thisSig.methodName.name !is SemgrepPatternAction.SignatureName.AnyName) return this
+    if (thisSig.enclosingClassName != MethodEnclosingClassName.anyClassName) return this
+
+    val pred = predicate.copy(signature = newSig)
+    return copy(predicate = pred)
+}
+
+private fun removeTransitiveAccept(automata: TaintRegisterStateAutomata): TaintRegisterStateAutomata {
+    val predecessors = automataPredecessors(automata)
+
+    val fixedAccept = hashSetOf<State>()
+    for (state in automata.finalAcceptStates) {
+        val statePredecessors = predecessors[state]
+        if (statePredecessors.isNullOrEmpty()) {
+            fixedAccept.add(state)
+            continue
+        }
+
+        if (statePredecessors.any { it.second !in automata.finalAcceptStates }) {
+            fixedAccept.add(state)
+            continue
+        }
+    }
+
+    return automata.copy(finalAcceptStates = fixedAccept)
 }
 
 private fun removeEndEdge(automata: TaintRegisterStateAutomata): TaintRegisterStateAutomata {

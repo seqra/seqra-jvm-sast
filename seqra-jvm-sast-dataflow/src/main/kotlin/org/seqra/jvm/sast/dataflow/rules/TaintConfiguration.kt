@@ -55,6 +55,7 @@ import org.seqra.dataflow.configuration.jvm.serialized.SerializedCondition
 import org.seqra.dataflow.configuration.jvm.serialized.SerializedCondition.AnnotationConstraint
 import org.seqra.dataflow.configuration.jvm.serialized.SerializedCondition.AnnotationParamMatcher
 import org.seqra.dataflow.configuration.jvm.serialized.SerializedFieldRule
+import org.seqra.dataflow.configuration.jvm.serialized.SerializedFunctionNameMatcher
 import org.seqra.dataflow.configuration.jvm.serialized.SerializedNameMatcher
 import org.seqra.dataflow.configuration.jvm.serialized.SerializedNameMatcher.ClassPattern
 import org.seqra.dataflow.configuration.jvm.serialized.SerializedNameMatcher.Pattern
@@ -115,14 +116,14 @@ class TaintConfiguration(cp: JIRClasspath) {
         config.staticFieldSource?.let { staticFieldSourceConfig.addRules(it) }
     }
 
-    fun entryPointForMethod(method: JIRMethod): List<TaintEntryPointSource> = entryPointConfig.getConfigForMethod(method)
-    fun sourceForMethod(method: JIRMethod): List<TaintMethodSource> = sourceConfig.getConfigForMethod(method)
-    fun exitSourceForMethod(method: JIRMethod): List<TaintMethodExitSource> = exitSourceConfig.getConfigForMethod(method)
-    fun sinkForMethod(method: JIRMethod): List<TaintMethodSink> = sinkConfig.getConfigForMethod(method)
-    fun passThroughForMethod(method: JIRMethod): List<TaintPassThrough> = passThroughConfig.getConfigForMethod(method)
-    fun cleanerForMethod(method: JIRMethod): List<TaintCleaner> = cleanerConfig.getConfigForMethod(method)
-    fun methodExitSinkForMethod(method: JIRMethod): List<TaintMethodExitSink> = methodExitSinkConfig.getConfigForMethod(method)
-    fun methodEntrySinkForMethod(method: JIRMethod): List<TaintMethodEntrySink> = methodEntrySinkConfig.getConfigForMethod(method)
+    fun entryPointForMethod(method: JIRMethod, allRelevant: Boolean): List<TaintEntryPointSource> = entryPointConfig.configForMethod(method, allRelevant)
+    fun sourceForMethod(method: JIRMethod, allRelevant: Boolean): List<TaintMethodSource> = sourceConfig.configForMethod(method, allRelevant)
+    fun exitSourceForMethod(method: JIRMethod, allRelevant: Boolean): List<TaintMethodExitSource> = exitSourceConfig.configForMethod(method, allRelevant)
+    fun sinkForMethod(method: JIRMethod, allRelevant: Boolean): List<TaintMethodSink> = sinkConfig.configForMethod(method, allRelevant)
+    fun passThroughForMethod(method: JIRMethod, allRelevant: Boolean): List<TaintPassThrough> = passThroughConfig.configForMethod(method, allRelevant)
+    fun cleanerForMethod(method: JIRMethod, allRelevant: Boolean): List<TaintCleaner> = cleanerConfig.configForMethod(method, allRelevant)
+    fun methodExitSinkForMethod(method: JIRMethod, allRelevant: Boolean): List<TaintMethodExitSink> = methodExitSinkConfig.configForMethod(method, allRelevant)
+    fun methodEntrySinkForMethod(method: JIRMethod, allRelevant: Boolean): List<TaintMethodEntrySink> = methodEntrySinkConfig.configForMethod(method, allRelevant)
 
     fun sourceForStaticField(field: JIRField): List<TaintStaticFieldSource> {
         check(field.isStatic)
@@ -177,24 +178,45 @@ class TaintConfiguration(cp: JIRClasspath) {
         }
 
         private val methodItems = hashMapOf<JIRMethod, List<T>>()
+        private val methodAllRelevantItems = hashMapOf<JIRMethod, List<T>>()
+
+        fun configForMethod(method: JIRMethod, allRelevant: Boolean): List<T> = if (!allRelevant) {
+            getConfigForMethod(method)
+        } else {
+            getAllRelevantConfigForMethod(method)
+        }
 
         @Synchronized
-        fun getConfigForMethod(method: JIRMethod): List<T> = methodItems.getOrPut(method) {
+        private fun getConfigForMethod(method: JIRMethod): List<T> = methodItems.getOrPut(method) {
             resolveMethodItems(method).adjustEmptyList()
         }
 
-        private fun resolveMethodItems(method: JIRMethod): List<T> {
-            val rules = mutableListOf<S>()
-            storage().findRules(rules, method)
-
-            rules.removeAll { it.signature?.matchFunctionSignature(method) == false }
-
-            return rules.flatMap { resolveMethodRule(it, method) }
+        @Synchronized
+        private fun getAllRelevantConfigForMethod(method: JIRMethod): List<T> = methodAllRelevantItems.getOrPut(method) {
+            resolveMethodRelevantItems(method).adjustEmptyList()
         }
+
+        private fun resolveMethodItems(method: JIRMethod): List<T> = resolveItems(method, ::resolveMethodRule)
+
+        private fun resolveMethodRelevantItems(method: JIRMethod): List<T> = resolveItems(method, ::resolveMethodRelevantRule)
 
         @Suppress("UNCHECKED_CAST")
         private fun resolveMethodRule(rule: S, method: JIRMethod): List<T> =
             rule.resolveMethodRule(method) as List<T>
+
+        @Suppress("UNCHECKED_CAST")
+        private fun resolveMethodRelevantRule(rule: S, method: JIRMethod): List<T> =
+            rule.resolveMethodRelevantRule(method) as List<T>
+
+        private inline fun resolveItems(method: JIRMethod, resolveItem: (S, JIRMethod) -> List<T>): List<T> {
+            val rules = mutableListOf<S>()
+            storage().findRules(rules, method)
+
+            rules.removeAll { !it.function.matchFunctionName(method) }
+            rules.removeAll { it.signature?.matchFunctionSignature(method) == false }
+
+            return rules.flatMap { resolveItem(it, method) }
+        }
     }
 
     private fun SerializedNameMatcher.match(name: String): Boolean = when (this) {
@@ -210,6 +232,23 @@ class TaintConfiguration(cp: JIRClasspath) {
         is SerializedNameMatcher.Array -> {
             val nameWithoutArrayModifier = name.removeSuffix("[]")
             name != nameWithoutArrayModifier && element.match(nameWithoutArrayModifier)
+        }
+    }
+
+    private fun SerializedFunctionNameMatcher.matchFunctionName(method: JIRMethod): Boolean {
+        if (!method.isConstructor && !method.isFinal && !method.isStatic) {
+            // storage().findRules is ok
+            return true
+        }
+
+        // method name matches, but class name may be not
+        val classMatcher = ClassPattern(`package`, `class`)
+        if (classMatcher.match(method.enclosingClass.name)) return true
+
+        if (method.isStatic) return false
+
+        return method.enclosingClass.allSuperHierarchySequence.any {
+            classMatcher.match(it.name)
         }
     }
 
@@ -261,7 +300,20 @@ class TaintConfiguration(cp: JIRClasspath) {
         }
     }
 
-    private fun SerializedRule.resolveMethodRule(method: JIRMethod): List<TaintConfigurationItem> {
+    private fun SerializedRule.resolveMethodRelevantRule(method: JIRMethod): List<TaintConfigurationItem> =
+        resolveMethodRuleWithConditionResolver(method) { condition, ctx ->
+            condition.resolveRelevant(method, ctx)
+        }
+
+    private fun SerializedRule.resolveMethodRule(method: JIRMethod): List<TaintConfigurationItem> =
+        resolveMethodRuleWithConditionResolver(method) { condition, ctx ->
+            condition.resolve(method, ctx)
+        }
+
+    private inline fun SerializedRule.resolveMethodRuleWithConditionResolver(
+        method: JIRMethod,
+        resolveCondition: (SerializedCondition?, AnyArgSpecializationCtx) -> Condition
+    ): List<TaintConfigurationItem> {
         val serializedCondition = when (this) {
             is SinkRule -> condition
             is SourceRule -> condition
@@ -281,61 +333,61 @@ class TaintConfiguration(cp: JIRClasspath) {
         }
 
         val contexts = anyArgSpecializationContexts(method, serializedCondition, actions)
-        return contexts.mapNotNull { resolveMethodRule(method, serializedCondition, it) }
+        return contexts.mapNotNull {
+            val condition = resolveCondition(serializedCondition, it).simplify()
+            if (condition.isFalse()) return@mapNotNull null
+
+            resolveMethodRule(method, condition, it)
+        }
     }
 
     private fun SerializedRule.resolveMethodRule(
         method: JIRMethod,
-        serializedCondition: SerializedCondition?,
+        condition: Condition,
         ctx: AnyArgSpecializationCtx,
-    ): TaintConfigurationItem? {
-        val condition = serializedCondition.resolve(method, ctx).simplify()
-        if (condition.isFalse()) return null
+    ): TaintConfigurationItem = when (this) {
+        is SerializedRule.EntryPoint -> {
+            TaintEntryPointSource(method, condition, taint.flatMap { it.resolveWithArray(method, ctx) }, info)
+        }
 
-        return when (this) {
-            is SerializedRule.EntryPoint -> {
-                TaintEntryPointSource(method, condition, taint.flatMap { it.resolveWithArray(method, ctx) }, info)
-            }
+        is SerializedRule.Source -> {
+            TaintMethodSource(method, condition, taint.flatMap { it.resolveWithArray(method, ctx) }, info)
+        }
 
-            is SerializedRule.Source -> {
-                TaintMethodSource(method, condition, taint.flatMap { it.resolveWithArray(method, ctx) }, info)
-            }
+        is SerializedRule.MethodExitSource -> {
+            TaintMethodExitSource(method, condition, taint.flatMap { it.resolveWithArray(method, ctx) }, info)
+        }
 
-            is SerializedRule.MethodExitSource -> {
-                TaintMethodExitSource(method, condition, taint.flatMap { it.resolveWithArray(method, ctx) }, info)
-            }
+        is SerializedRule.Sink -> {
+            TaintMethodSink(
+                method, condition,
+                trackFactsReachAnalysisEnd?.flatMap { it.resolveNoArray(method, ctx) }.orEmpty(),
+                ruleId(), meta(), info
+            )
+        }
 
-            is SerializedRule.Sink -> {
-                TaintMethodSink(
-                    method, condition,
-                    trackFactsReachAnalysisEnd?.flatMap { it.resolveNoArray(method, ctx) }.orEmpty(),
-                    ruleId(), meta(), info
-                )
-            }
+        is SerializedRule.MethodExitSink -> {
+            TaintMethodExitSink(
+                method, condition,
+                trackFactsReachAnalysisEnd?.flatMap { it.resolveNoArray(method, ctx) }.orEmpty(),
+                ruleId(), meta(), info
+            )
+        }
 
-            is SerializedRule.MethodExitSink -> {
-                TaintMethodExitSink(
-                    method, condition,
-                    trackFactsReachAnalysisEnd?.flatMap { it.resolveNoArray(method, ctx) }.orEmpty(),
-                    ruleId(), meta(), info
-                )
-            }
+        is SerializedRule.MethodEntrySink -> {
+            TaintMethodEntrySink(
+                method, condition,
+                trackFactsReachAnalysisEnd?.flatMap { it.resolveNoArray(method, ctx) }.orEmpty(),
+                ruleId(), meta(), info
+            )
+        }
 
-            is SerializedRule.MethodEntrySink -> {
-                TaintMethodEntrySink(
-                    method, condition,
-                    trackFactsReachAnalysisEnd?.flatMap { it.resolveNoArray(method, ctx) }.orEmpty(),
-                    ruleId(), meta(), info
-                )
-            }
+        is SerializedRule.PassThrough -> {
+            TaintPassThrough(method, condition, copy.flatMap { it.resolve(method, ctx) }, info)
+        }
 
-            is SerializedRule.PassThrough -> {
-                TaintPassThrough(method, condition, copy.flatMap { it.resolve(method, ctx) }, info)
-            }
-
-            is SerializedRule.Cleaner -> {
-                TaintCleaner(method, condition, cleans.flatMap { it.resolve(method, ctx) }, info)
-            }
+        is SerializedRule.Cleaner -> {
+            TaintCleaner(method, condition, cleans.flatMap { it.resolve(method, ctx) }, info)
         }
     }
 
@@ -445,6 +497,48 @@ class TaintConfiguration(cp: JIRClasspath) {
         classifiers.add(classifier)
     }
 
+    private fun SerializedCondition?.resolveRelevant(
+        method: JIRMethod,
+        ctx: AnyArgSpecializationCtx,
+    ): Condition {
+        val relevantCondition = this?.rewriteNnf(negated = false) { c, negated ->
+            if (!negated) return@rewriteNnf c
+
+            val result = when (c) {
+                is SerializedCondition.ClassNameMatches,
+                is SerializedCondition.MethodNameMatches,
+                is SerializedCondition.NumberOfArgs -> return@rewriteNnf SerializedCondition.True
+
+                else -> c
+            }
+
+            SerializedCondition.not(result)
+        }
+
+        return relevantCondition.resolve(method, ctx)
+    }
+
+    private fun SerializedCondition.rewriteNnf(
+        negated: Boolean,
+        rewriteLiteral: (SerializedCondition, Boolean) -> SerializedCondition
+    ): SerializedCondition = when (this) {
+        is SerializedCondition.Not -> not.rewriteNnf(!negated, rewriteLiteral)
+
+        is SerializedCondition.And -> if (!negated) {
+            SerializedCondition.and(allOf.map { it.rewriteNnf(negated = false, rewriteLiteral) })
+        } else {
+            SerializedCondition.or(allOf.map { it.rewriteNnf(negated = true, rewriteLiteral) })
+        }
+
+        is SerializedCondition.Or -> if (!negated) {
+            SerializedCondition.or(anyOf.map { it.rewriteNnf(negated = false, rewriteLiteral) })
+        } else {
+            SerializedCondition.and(anyOf.map { it.rewriteNnf(negated = true, rewriteLiteral) })
+        }
+
+        else -> rewriteLiteral(this, negated)
+    }
+
     private fun SerializedCondition?.resolve(
         method: JIRMethod,
         ctx: AnyArgSpecializationCtx,
@@ -534,6 +628,8 @@ class TaintConfiguration(cp: JIRClasspath) {
         val position = pos.resolve(method, ctx)
         if (position.isEmpty()) return mkFalse()
 
+        val falsePositions = hashSetOf<Position>()
+
         val normalizedTypeIs = typeIs.normalizeAnyName()
         for (pos in position) {
             val posTypeName = when (pos) {
@@ -550,13 +646,18 @@ class TaintConfiguration(cp: JIRClasspath) {
                 if (method.enclosingClass.allSuperHierarchySequence.any { normalizedTypeIs.match(it.name) }) {
                     return mkTrue()
                 }
+
+                if (method.isConstructor || method.isFinal) {
+                    falsePositions.add(pos)
+                }
             }
         }
 
         val matcher = normalizedTypeIs.toConditionNameMatcher(patternManager)
             ?: return mkTrue()
 
-        return mkOr(position.map { TypeMatchesPattern(it, matcher) })
+        val nonFalsePositions = position.filter { it !in falsePositions }
+        return mkOr(nonFalsePositions.map { TypeMatchesPattern(it, matcher) })
     }
 
     private fun SerializedTaintAssignAction.resolveWithArray(method: JIRMethod, ctx: AnyArgSpecializationCtx): List<AssignMark> =

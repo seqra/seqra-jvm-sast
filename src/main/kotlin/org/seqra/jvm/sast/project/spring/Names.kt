@@ -19,6 +19,8 @@ val springControllerMethodMappingAnnotations = setOf(
 
 const val SpringModelAttribute = "$SpringPackage.web.bind.annotation.ModelAttribute"
 const val SpringPathVariable = "$SpringPackage.web.bind.annotation.PathVariable"
+const val SpringRequestParam = "$SpringPackage.web.bind.annotation.RequestParam"
+const val SpringRequestBody = "$SpringPackage.web.bind.annotation.RequestBody"
 
 const val SpringValidator = "$SpringPackage.validation.Validator"
 const val SpringBindingResult = "$SpringPackage.validation.BindingResult"
@@ -32,4 +34,4 @@ const val ReactorFlux = "reactor.core.publisher.Flux"
 const val JakartaConstraint = "jakarta.validation.Constraint"
 const val JakartaValid = "jakarta.validation.Valid"
 
-const val SpringRepository = "org.springframework.data.repository.Repository"
+const val SpringRepository = "$SpringPackage.data.repository.Repository"

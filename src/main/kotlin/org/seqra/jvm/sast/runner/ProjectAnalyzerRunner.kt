@@ -2,6 +2,7 @@ package org.seqra.jvm.sast.runner
 
 import com.github.ajalt.clikt.core.main
 import com.github.ajalt.clikt.parameters.options.default
+import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.multiple
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.types.boolean
@@ -12,6 +13,7 @@ import org.seqra.dataflow.configuration.CommonTaintConfigurationSinkMeta.Severit
 import org.seqra.jvm.sast.dataflow.DebugOptions
 import org.seqra.jvm.sast.project.ProjectAnalysisOptions
 import org.seqra.jvm.sast.project.ProjectAnalyzer
+import org.seqra.jvm.sast.project.SarifGenerationOptions
 import org.seqra.jvm.sast.project.TestProjectAnalyzer
 import org.seqra.jvm.sast.util.file
 import org.seqra.project.Project
@@ -36,26 +38,45 @@ class ProjectAnalyzerRunner : AbstractAnalyzerRunner() {
         .path()
         .multiple()
 
-    private val semgrepRuleMinSeverity: Severity by option(help = "Minimal rule severity")
-        .choice(Severity.entries.associateBy { it.name.lowercase() })
-        .default(Severity.Note)
-
-    private val semgrepRuleLoadErrors: Path? by option(help = "Output file for errors encountered while loading Semgrep rules")
-        .newFile()
+    private val semgrepRuleSeverity: List<Severity> by option(help = "Rule severity")
+        .choice(Severity.entries.associateBy { it.name.lowercase() }).multiple()
 
     private val semgrepRuleLoadTrace: Path? by option(help = "Output file for Semgrep rules loader trace")
         .newFile()
+
+    private val sarifFileName: String by option(help = "Sarif file name")
+        .default(SarifGenerationOptions.DEFAULT_FILE_NAME)
+
+    private val sarifThreadFlowLimit: Int? by option(help = "Sarif thread flow limit").int()
+
+    private val sarifSemgrepStyleId: Boolean by option(help = "Use semgrep style ids").flag()
+
+    private val sarifToolVersion: String by option(help = "Tool version")
+        .default(SarifGenerationOptions.DEFAULT_VERSION)
+
+    private val sarifToolSemanticVersion: String by option(help = "Tool semantic version")
+        .default(SarifGenerationOptions.DEFAULT_SEMANTIC_VERSION)
+
+    private val sarifUriBase: String? by option(help = "Sarif sources root uri")
 
     override fun analyzeProject(project: Project, analyzerOutputDir: Path, debugOptions: DebugOptions) {
         if (project.modules.isEmpty()) {
             return
         }
 
+        val sarifOptions = SarifGenerationOptions(
+            sarifFileName = sarifFileName,
+            sarifThreadFlowLimit = sarifThreadFlowLimit,
+            useSemgrepStyleId = sarifSemgrepStyleId,
+            toolVersion = sarifToolVersion,
+            toolSemanticVersion = sarifToolSemanticVersion,
+            uriBase = sarifUriBase,
+        )
+
         val options = ProjectAnalysisOptions(
             customConfig = config,
             semgrepRuleSet = semgrepRuleSet,
-            semgrepMinSeverity = semgrepRuleMinSeverity,
-            semgrepRuleLoadErrors = semgrepRuleLoadErrors,
+            semgrepSeverity = semgrepRuleSeverity,
             semgrepRuleLoadTrace = semgrepRuleLoadTrace,
             cwe = cwe,
             useSymbolicExecution = useSymbolicExecution,
@@ -64,7 +85,8 @@ class ProjectAnalyzerRunner : AbstractAnalyzerRunner() {
             ifdsApMode = ifdsApMode,
             projectKind = projectKind,
             storeSummaries = true,
-            debugOptions = debugOptions
+            debugOptions = debugOptions,
+            sarifGenerationOptions = sarifOptions,
         )
 
         if (!debugOptions.runRuleTests) {

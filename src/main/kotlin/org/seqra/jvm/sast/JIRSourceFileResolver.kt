@@ -7,6 +7,7 @@ import org.seqra.ir.api.jvm.JIRClassOrInterface
 import org.seqra.ir.api.jvm.RegisteredLocation
 import org.seqra.ir.api.jvm.cfg.JIRInst
 import org.seqra.ir.api.jvm.ext.packageName
+import org.seqra.jvm.sast.ast.JavaClassNameExtractor
 import java.io.IOException
 import java.nio.file.FileVisitResult
 import java.nio.file.Files
@@ -14,8 +15,8 @@ import java.nio.file.Path
 import java.nio.file.SimpleFileVisitor
 import java.nio.file.attribute.BasicFileAttributes
 import kotlin.io.path.extension
+import kotlin.io.path.nameWithoutExtension
 import kotlin.io.path.relativeTo
-import kotlin.io.path.walk
 
 fun JIRClassOrInterface.mostOuterClass(): JIRClassOrInterface {
     var result = this
@@ -29,19 +30,34 @@ class JIRSourceFileResolver(
     private val projectSourceRoot: Path?,
     private val projectLocationsSourceRoots: Map<RegisteredLocation, Path>
 ) : SourceFileResolver<CommonInst> {
-    private val locationSources: Map<RegisteredLocation, Map<String, List<Path>>> by lazy {
+    private class SourceLocations(
+        val allSourceByFileName: Map<String, List<Path>>,
+        val javaLocations: Map<String, List<Path>>,
+        val kotlinLocations: Map<String, List<Path>>
+    )
+
+    private val locationSources: Map<RegisteredLocation, SourceLocations> by lazy {
         projectLocationsSourceRoots.mapValues { (_, sourcesRoot) ->
-            collectAllSources(sourcesRoot)
+            logger.info { "Start source root indexing: $sourcesRoot" }
+            collectAllSources(sourcesRoot).also {
+                logger.info { "Finish source root indexing: $sourcesRoot" }
+            }
         }
     }
 
-    private fun collectAllSources(root: Path): Map<String, List<Path>> {
-        val collected = mutableListOf<Path>()
+    private fun collectAllSources(root: Path): SourceLocations {
+        val collectedJava = mutableListOf<Path>()
+        val collectedKotlin = mutableListOf<Path>()
+
         Files.walkFileTree(root, object : SimpleFileVisitor<Path>() {
             override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
                 val ext = file.extension
-                if (ext == JAVA_EXTENSION || ext == KOTLIN_EXTENSION) {
-                    collected.add(file)
+                if (ext == JAVA_EXTENSION) {
+                    collectedJava.add(file)
+                }
+
+                if (ext == KOTLIN_EXTENSION) {
+                    collectedKotlin.add(file)
                 }
                 return FileVisitResult.CONTINUE
             }
@@ -59,13 +75,38 @@ class JIRSourceFileResolver(
                 return super.postVisitDirectory(dir, exc)
             }
         })
-        return collected.groupBy { it.fileName.toString() }
+
+        val javaLocations = hashMapOf<String, MutableList<Path>>()
+        for (jFile in collectedJava) {
+            val classNames = JavaClassNameExtractor.extractClassNames(jFile)
+            classNames.forEach {
+                javaLocations.getOrPut(it, ::mutableListOf).add(jFile)
+            }
+        }
+
+        val kotlinLocations = collectedKotlin.groupBy { it.nameWithoutExtension }
+
+        val allSourcesByFileName = collectedJava.groupByTo(hashMapOf()) { it.fileName }
+        collectedKotlin.groupByTo(allSourcesByFileName) { it.fileName }
+
+        @Suppress("UNCHECKED_CAST")
+        return SourceLocations(
+            allSourcesByFileName as Map<String, List<Path>>,
+            javaLocations,
+            kotlinLocations
+        )
     }
 
     override fun relativeToRoot(path: Path): String =
         (projectSourceRoot?.let { path.relativeTo(it) } ?: path).toString()
 
-    override fun resolveByName(inst: CommonInst, pkg: String, name: String): Path? {
+    private val sourcesCache = hashMapOf<Pair<String, String>, Path?>()
+    override fun resolveByName(inst: CommonInst, pkg: String, name: String): Path? =
+        sourcesCache.computeIfAbsent(pkg to name) {
+            computeByName(inst, pkg, name)
+        }
+
+    private fun computeByName(inst: CommonInst, pkg: String, name: String): Path? {
         check(inst is JIRInst) { "Expected inst to be JIRInst" }
         val instLocationCls = inst.location.method.enclosingClass
 
@@ -74,7 +115,7 @@ class JIRSourceFileResolver(
 
         val sources = locationSources[location] ?: return null
 
-        val relatedSourceFiles = sources[name] ?: return null
+        val relatedSourceFiles = sources.allSourceByFileName[name] ?: return null
         val sourceFilesWithCorrectPackage = relatedSourceFiles.filter { packageMatches(it, pkg) }
 
         if (sourceFilesWithCorrectPackage.size != 1) {
@@ -85,7 +126,13 @@ class JIRSourceFileResolver(
         return sourceFilesWithCorrectPackage[0]
     }
 
-    override fun resolveByInst(inst: CommonInst): Path? {
+    private val locationsCache = hashMapOf<CommonInst, Path?>()
+    override fun resolveByInst(inst: CommonInst): Path? =
+        locationsCache.computeIfAbsent(inst) {
+            computeByInst(inst)
+        }
+
+    private fun computeByInst(inst: CommonInst): Path? {
         check(inst is JIRInst) { "Expected inst to be JIRInst" }
         val instLocationCls = inst.location.method.enclosingClass
 
@@ -94,39 +141,60 @@ class JIRSourceFileResolver(
 
         val sources = locationSources[location] ?: return null
 
-        val locationCls = instLocationCls.mostOuterClass()
-        // using split for abstract/virtual classes, where continuation after the symbol specifies exact nameless class
-        val clsName = locationCls.simpleName
-        val sourceFileNameVariants = mutableListOf<String>()
+        val mostOuterCls = instLocationCls.mostOuterClass()
 
-        if (clsName.endsWith("Kt")) {
-            sourceFileNameVariants += clsName.removeSuffix("Kt") + ".$KOTLIN_EXTENSION"
+        val outerClsPath = sources.tryResolveSourceFileQuery(
+            mostOuterCls.simpleName, mostOuterCls, isKotlin = false
+        )
+        val sourceLocations = when (outerClsPath.size) {
+            1 -> outerClsPath
+            0 -> {
+                val kotlinClsPath = sources.tryResolveSourceFileQuery(
+                    mostOuterCls.simpleName, mostOuterCls, isKotlin = true
+                )
+
+                when (kotlinClsPath.size) {
+                    0 -> sources.tryResolveSourceFileQuery(
+                        mostOuterCls.simpleName.removeSuffix("Kt"), mostOuterCls, isKotlin = true
+                    )
+
+                    else -> kotlinClsPath
+                }
+            }
+
+            else -> {
+                val innerClassFiles = sources.tryResolveSourceFileQuery(
+                    instLocationCls.simpleName, instLocationCls, isKotlin = false
+                )
+                val intersect = innerClassFiles.filter { it in outerClsPath }
+                if (intersect.isEmpty()) outerClsPath else intersect
+            }
         }
 
-        sourceFileNameVariants += "$clsName.$JAVA_EXTENSION"
-        sourceFileNameVariants += "$clsName.$KOTLIN_EXTENSION"
-
-        for (sourceFileName in sourceFileNameVariants) {
-            return tryResolveSourceFile(sources, locationCls, sourceFileName) ?: continue
+        if (sourceLocations.isEmpty()) {
+            logger.warn { "Source file was not resolved for: ${instLocationCls.name}" }
+            return null
         }
 
-        logger.warn { "Source file was not resolved for: ${instLocationCls.name}" }
-        return null
+        if (sourceLocations.size > 1) {
+            logger.warn { "Ambiguous source file for class ${instLocationCls.name}: $sourceLocations" }
+        }
+
+        return sourceLocations.firstOrNull()
     }
 
-    private fun tryResolveSourceFile(
-        sources: Map<String, List<Path>>,
-        locationCls: JIRClassOrInterface,
-        sourceFileName: String
-    ): Path? {
-        val relatedSourceFiles = sources[sourceFileName] ?: return null
-        val sourceFilesWithCorrectPackage = relatedSourceFiles.filter { packageMatches(it, locationCls) }
-
-        if (sourceFilesWithCorrectPackage.size > 1) {
-            logger.warn { "Ambiguous source file for class ${locationCls.name}: $sourceFilesWithCorrectPackage" }
+    private fun SourceLocations.tryResolveSourceFileQuery(
+        className: String,
+        cls: JIRClassOrInterface,
+        isKotlin: Boolean
+    ): List<Path> {
+        val paths = if (!isKotlin) {
+            javaLocations[className]
+        } else {
+            kotlinLocations[className]
         }
 
-        return sourceFilesWithCorrectPackage.firstOrNull()
+        return paths?.filter { packageMatches(it, cls) }.orEmpty()
     }
 
     private fun packageMatches(sourceFile: Path, cls: JIRClassOrInterface) =

@@ -22,8 +22,8 @@ import java.nio.file.Path
 import kotlin.io.path.Path
 
 data class RuleMetadata(
-    val path: String,
     val ruleId: String,
+    val shortRuleId: String,
     val message: String,
     val severity: Severity,
     val metadata: YamlMap?
@@ -97,9 +97,19 @@ class SemgrepRuleLoader(
         registeredRules[rule.ruleId] = rule
     }
 
-    fun loadRules(minSeverity: Severity): List<Pair<TaintRuleFromSemgrep, RuleMetadata>> {
+    data class RuleLoadResult(
+        val rulesWithMeta: List<Pair<TaintRuleFromSemgrep, RuleMetadata>>,
+        val disabledRules: Set<String>,
+    )
+
+    fun loadRules(severity: List<Severity> = emptyList()): RuleLoadResult {
+        fun Rule<*>.skip(): Boolean =
+            info.isDisabled || info.isLibraryRule || !ruleSeverityAllow(this, severity)
+
         registeredRules.values.toList()
             .forEach { parseRule(it, forceLibraryMode = false) }
+
+        resolveRuleOverrides()
 
         parsedRules.values
             .filterIsInstance<NormalRule<Formula>>()
@@ -107,34 +117,55 @@ class SemgrepRuleLoader(
 
         val loaded = mutableListOf<Pair<TaintRuleFromSemgrep, RuleMetadata>>()
         builtNormalRules.values
-            .filterNot { it.info.disabled }
-            .filter { ruleSeverityGreaterOrEqual(it, minSeverity) }
+            .filterNot { it.skip() }
             .forEach {
                 loaded += loadNormalRule(it) ?: return@forEach
             }
 
         parsedRules.values
             .filterIsInstance<JoinRule<*>>()
-            .filterNot { it.info.disabled }
-            .filter { ruleSeverityGreaterOrEqual(it, minSeverity) }
+            .filterNot { it.skip() }
             .forEach {
                 loaded += loadJoinRule(it) ?: return@forEach
             }
 
-        return loaded
+        return RuleLoadResult(loaded, disabledRules)
     }
 
     private data class RuleInfo(
         val ruleId: String,
         val shortRuleId: String,
+        val overridesRuleId: String?,
         val isLibraryRule: Boolean,
         val isDisabled: Boolean,
         val metadata: RuleMetadata,
         val sinkMeta: SinkMetaData,
         val ruleTrace: SemgrepRuleLoadTrace,
         val pathInfo: RuleSetPathInfo,
-    ) {
-        val disabled: Boolean get() = isDisabled || isLibraryRule
+    )
+
+    private fun resolveRuleOverrides() {
+        val overrideMapping = hashMapOf<String, String>()
+        for ((ruleId, rule) in parsedRules) {
+            val override = rule.info.overridesRuleId ?: continue
+            val prev = overrideMapping.putIfAbsent(override, ruleId)
+            if (prev != null) {
+                registeredRules[ruleId]?.ruleTrace
+                    ?.stepTrace(Step.LOAD_RULESET)
+                    ?.error("Ambiguous override: $prev", Reason.ERROR)
+            }
+        }
+
+        for ((ruleId, overrideId) in overrideMapping) {
+            val info = parsedRules[ruleId]?.info
+            if (info == null) {
+                registeredRules[overrideId]?.ruleTrace
+                    ?.stepTrace(Step.LOAD_RULESET)
+                    ?.error("Rule overrides nothing", Reason.WARNING)
+                continue
+            }
+            parsedRules[ruleId] = RuleOverride(overrideId, info)
+        }
     }
 
     private sealed interface Rule<P> {
@@ -152,11 +183,24 @@ class SemgrepRuleLoader(
         override val info: RuleInfo,
     ) : Rule<P>
 
+    private data class RuleOverride<P>(
+        val refId: String,
+        override val info: RuleInfo
+    ) : Rule<P>
+
     private val parsedRules = hashMapOf<String, Rule<Formula>>()
+
+    private val disabledRules = hashSetOf<String>()
 
     private fun parseRule(registeredRule: RegisteredRule, forceLibraryMode: Boolean) {
         val ruleInfo = parseRuleInfo(registeredRule, forceLibraryMode)
         val loadTrace = ruleInfo.ruleTrace.stepTrace(Step.LOAD_RULESET)
+
+        if (ruleInfo.isDisabled) {
+            disabledRules.add(ruleInfo.ruleId)
+            loadTrace.info("Skip disabled rule")
+            return
+        }
 
         val rule = registeredRule.rule
         when (rule.mode) {
@@ -283,23 +327,43 @@ class SemgrepRuleLoader(
         }
     }
 
+    private fun resolveBuiltRuleWrtOverrides(
+        ruleId: String,
+        trace: SemgrepRuleLoadStepTrace,
+        overrideChain: MutableSet<String>
+    ): NormalRule<BuiltRule>? {
+        val parsedRule = parsedRules[ruleId]
+        if (parsedRule == null) {
+            trace.error("Ref $ruleId not registered", Reason.ERROR)
+            return null
+        }
+
+        if (parsedRule is RuleOverride<*>) {
+            if (!overrideChain.add(ruleId)) {
+                trace.error("Override loop", Reason.ERROR)
+                return null
+            }
+
+            return resolveBuiltRuleWrtOverrides(parsedRule.refId, trace, overrideChain)
+        }
+
+        val builtRule = builtNormalRules[ruleId]
+        if (builtRule == null) {
+            trace.error("Ref $ruleId not loaded", Reason.ERROR)
+            return null
+        }
+
+        return builtRule
+    }
+
     private fun buildJoinRule(rule: JoinRule<*>, trace: SemgrepRuleLoadStepTrace): TaintAutomataJoinRule? {
         val items = hashMapOf<String, TaintAutomataJoinRuleItem>()
         val itemRenames = hashMapOf<String, List<Pair<MetavarAtom, MetavarAtom>>>()
 
         for (ref in rule.refs) {
-            val refId = resolveRefRuleId(ref.rule, rule.info)
-            val itemAutomata = builtNormalRules[refId]
-            if (itemAutomata == null) {
-                val registeredRef = registeredRules[refId]
-                if (registeredRef == null) {
-                    trace.error("Ref ${ref.rule} not registered", Reason.ERROR)
-                    return null
-                }
-
-                trace.error("Ref ${ref.rule} not loaded", Reason.ERROR)
-                return null
-            }
+            val refId = resolveRefRuleId(ref.rule, rule.info.pathInfo.ruleRelativePath)
+            val itemAutomata = resolveBuiltRuleWrtOverrides(refId, trace, hashSetOf())
+                ?: return null
 
             val renames = ref.renames.map {
                 val from = parseMetaVar(it.from, trace) ?: return null
@@ -367,8 +431,10 @@ class SemgrepRuleLoader(
 
         val sinkMeta = SinkMetaData(ruleCwe, semgrepRule.message, severity)
         val metadata = RuleMetadata(rule.ruleId, semgrepRule.id, semgrepRule.message, severity, semgrepRule.metadata)
+        val overrides = semgrepRule.overrides(rule.pathInfo.ruleRelativePath)
         return RuleInfo(
             rule.ruleId, semgrepRule.id,
+            overridesRuleId = overrides,
             isLibraryRule = forceLibraryMode || semgrepRule.isLibraryRule(),
             isDisabled = semgrepRule.isDisabled(),
             metadata, sinkMeta, rule.ruleTrace, rule.pathInfo
@@ -385,7 +451,12 @@ class SemgrepRuleLoader(
         options?.getBoolKeyOrFalse("lib") ?: false
 
     private fun SemgrepYamlRule.isDisabled(): Boolean =
-        options?.getBoolKeyOrFalse("disabled") ?: false
+        options?.getKey("disabled") != null
+
+    private fun SemgrepYamlRule.overrides(ruleRelativePath: Path): String? {
+        val overrides = options?.getScalar("overrides") ?: return null
+        return resolveRefRuleId(overrides.content, ruleRelativePath)
+    }
 
     private fun SemgrepYamlRule.cweInfo(): List<Int>? {
         val rawCwes = metadata?.readStrings("cwe") ?: return null
@@ -398,9 +469,10 @@ class SemgrepRuleLoader(
         return match.groupValues[1].toInt()
     }
 
-    private fun RuleSetPathInfo.ruleSetName(): String = ruleRelativePath.toString()
+    private fun RuleSetPathInfo.ruleSetName(): String = ruleRelativePath.ruleSetName()
+    private fun Path.ruleSetName(): String = this.toString()
 
-    private fun resolveRefRuleId(refRule: String, ruleInfo: RuleInfo): String {
+    private fun resolveRefRuleId(refRule: String, ruleRelativePath: Path): String {
         val refRuleId = refRule.substringAfter('#')
 
         val refRulePath = refRule.substringBefore('#', missingDelimiterValue = "")
@@ -408,16 +480,13 @@ class SemgrepRuleLoader(
             ?.removePrefix("/")
             ?.let { Path(it) }
 
-        val refRulePathInfo = RuleSetPathInfo(
-            ruleInfo.pathInfo.rulesRoot,
-            refRulePath ?: ruleInfo.pathInfo.ruleRelativePath
-        )
+        val refRulePathInfo = refRulePath ?: ruleRelativePath
         val refRuleSetName = refRulePathInfo.ruleSetName()
         return SemgrepRuleUtils.getRuleId(refRuleSetName, refRuleId)
     }
 
-    private fun ruleSeverityGreaterOrEqual(rule: Rule<*>, severity: Severity): Boolean =
-        rule.info.metadata.severity.ordinal >= severity.ordinal
+    private fun ruleSeverityAllow(rule: Rule<*>, severity: List<Severity>): Boolean =
+        severity.isEmpty() || severity.contains(rule.info.metadata.severity)
 
     companion object {
         private val cweRegex = Regex("CWE-(\\d+).*", RegexOption.IGNORE_CASE)

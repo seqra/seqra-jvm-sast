@@ -1516,24 +1516,8 @@ passThrough:
 - function: java.lang.Object#clone
   signature: () java.lang.Object
   copy:
-  - from:
-    - this
-    - .java.lang.Object#MapKey#java.lang.Object
-    to:
-    - result
-    - .java.lang.Object#MapKey#java.lang.Object
-  - from:
-    - this
-    - .java.lang.Object#MapValue#java.lang.Object
-    to:
-    - result
-    - .java.lang.Object#MapValue#java.lang.Object
-  - from:
-    - this
-    - .java.lang.Object#Element#java.lang.Object
-    to:
-    - result
-    - .java.lang.Object#Element#java.lang.Object
+  - from: this
+    to: result
 - function: java.lang.Object#toString
   signature: () java.lang.String
   overrides: false
@@ -1670,31 +1654,16 @@ passThrough:
   - from: arg(0)
     to: this
 - function: java.lang.String#<init>
-  signature: () void
-  copy:
-  - from: arg(0)
-    to:
-    - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
-  - from: arg(0)
-    to: this
-- function: java.lang.String#<init>
   signature: (byte[]) void
   copy:
   - from: arg(0)
     to:
     - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
+    - .java.lang.String#<string-bytes>#byte[]
   - from:
     - arg(0)
     - '[*]'
     to: this
-  - from:
-    - arg(0)
-    - '[*]'
-    to:
-    - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
   - from: arg(0)
     to: this
 - function: java.lang.String#<init>
@@ -1703,35 +1672,21 @@ passThrough:
   - from: arg(0)
     to:
     - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
+    - .java.lang.String#<string-bytes>#byte[]
   - from:
     - arg(0)
     - '[*]'
     to: this
-  - from:
-    - arg(0)
-    - '[*]'
-    to:
-    - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
   - from: arg(0)
     to: this
 - function: java.lang.String#<init>
   signature: (java.lang.StringBuffer) void
   copy:
   - from: arg(0)
-    to:
-    - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
-  - from: arg(0)
     to: this
 - function: java.lang.String#<init>
   signature: (java.lang.StringBuilder) void
   copy:
-  - from: arg(0)
-    to:
-    - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
   - from: arg(0)
     to: this
 - function: java.lang.String#<init>
@@ -1740,17 +1695,11 @@ passThrough:
   - from: arg(0)
     to:
     - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
+    - .java.lang.String#<string-bytes>#byte[]
   - from:
     - arg(0)
     - '[*]'
     to: this
-  - from:
-    - arg(0)
-    - '[*]'
-    to:
-    - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
   - from: arg(0)
     to: this
 - function: java.lang.String#<init>
@@ -1759,17 +1708,11 @@ passThrough:
   - from: arg(0)
     to:
     - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
+    - .java.lang.String#<string-bytes>#byte[]
   - from:
     - arg(0)
     - '[*]'
     to: this
-  - from:
-    - arg(0)
-    - '[*]'
-    to:
-    - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
   - from: arg(0)
     to: this
 - function: java.lang.String#<init>
@@ -1778,17 +1721,11 @@ passThrough:
   - from: arg(0)
     to:
     - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
+    - .java.lang.String#<string-bytes>#byte[]
   - from:
     - arg(0)
     - '[*]'
     to: this
-  - from:
-    - arg(0)
-    - '[*]'
-    to:
-    - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
   - from: arg(0)
     to: this
 - function: java.lang.String#<init>
@@ -1797,26 +1734,16 @@ passThrough:
   - from: arg(0)
     to:
     - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
+    - .java.lang.String#<string-bytes>#byte[]
   - from:
     - arg(0)
     - '[*]'
     to: this
-  - from:
-    - arg(0)
-    - '[*]'
-    to:
-    - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
   - from: arg(0)
     to: this
 - function: java.lang.String#<init>
   signature: (java.lang.AbstractStringBuilder, java.lang.Void) void
   copy:
-  - from: arg(0)
-    to:
-    - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
   - from: arg(0)
     to: this
 - function: java.lang.String#<init>
@@ -1825,17 +1752,11 @@ passThrough:
   - from: arg(0)
     to:
     - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
+    - .java.lang.String#<string-bytes>#byte[]
   - from:
     - arg(0)
     - '[*]'
     to: this
-  - from:
-    - arg(0)
-    - '[*]'
-    to:
-    - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
   - from: arg(0)
     to: this
 - function: java.lang.String#<init>
@@ -1844,17 +1765,11 @@ passThrough:
   - from: arg(0)
     to:
     - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
+    - .java.lang.String#<string-bytes>#byte[]
   - from:
     - arg(0)
     - '[*]'
     to: this
-  - from:
-    - arg(0)
-    - '[*]'
-    to:
-    - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
   - from: arg(0)
     to: this
 - function: java.lang.String#<init>
@@ -1863,17 +1778,11 @@ passThrough:
   - from: arg(0)
     to:
     - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
+    - .java.lang.String#<string-bytes>#byte[]
   - from:
     - arg(0)
     - '[*]'
     to: this
-  - from:
-    - arg(0)
-    - '[*]'
-    to:
-    - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
   - from: arg(0)
     to: this
 - function: java.lang.String#<init>
@@ -1882,17 +1791,11 @@ passThrough:
   - from: arg(0)
     to:
     - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
+    - .java.lang.String#<string-bytes>#byte[]
   - from:
     - arg(0)
     - '[*]'
     to: this
-  - from:
-    - arg(0)
-    - '[*]'
-    to:
-    - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
   - from: arg(0)
     to: this
 - function: java.lang.String#<init>
@@ -1901,17 +1804,11 @@ passThrough:
   - from: arg(0)
     to:
     - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
+    - .java.lang.String#<string-bytes>#byte[]
   - from:
     - arg(0)
     - '[*]'
     to: this
-  - from:
-    - arg(0)
-    - '[*]'
-    to:
-    - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
   - from: arg(0)
     to: this
 - function: java.lang.String#<init>
@@ -1920,17 +1817,11 @@ passThrough:
   - from: arg(0)
     to:
     - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
+    - .java.lang.String#<string-bytes>#byte[]
   - from:
     - arg(0)
     - '[*]'
     to: this
-  - from:
-    - arg(0)
-    - '[*]'
-    to:
-    - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
   - from: arg(0)
     to: this
 - function: java.lang.String#<init>
@@ -1939,17 +1830,11 @@ passThrough:
   - from: arg(0)
     to:
     - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
+    - .java.lang.String#<string-bytes>#byte[]
   - from:
     - arg(0)
     - '[*]'
     to: this
-  - from:
-    - arg(0)
-    - '[*]'
-    to:
-    - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
   - from: arg(0)
     to: this
 - function: java.lang.String#charAt
@@ -1958,8 +1843,8 @@ passThrough:
   - from: this
     to: result
   - from:
-    - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
+      - this
+      - .java.lang.String#<string-bytes>#byte[]
     to: result
 - function: java.lang.String#concat
   signature: (java.lang.String) java.lang.String
@@ -1971,42 +1856,26 @@ passThrough:
   copy:
   - from: this
     to: result
-  - from:
-    - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
-    to: result
 - function: java.lang.String#copyValueOf
   signature: (char[]) java.lang.String
   copy:
   - from: arg(0)
     to: result
-  - from: arg(1)
-    to: result
-- function: java.lang.String#copyValueOf
-  signature: (char[]) java.lang.String
-  copy:
-  - from: this
-    to: result
-  - from:
-    - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
-    to: result
+  - from: arg(0)
+    to:
+      - result
+      - .java.lang.String#<string-bytes>#byte[]
+
 - function: java.lang.String#copyValueOf
   signature: (char[], int, int) java.lang.String
   copy:
   - from: arg(0)
     to: result
-  - from: arg(1)
-    to: result
-- function: java.lang.String#copyValueOf
-  signature: (char[], int, int) java.lang.String
-  copy:
-  - from: this
-    to: result
-  - from:
-    - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
-    to: result
+  - from: arg(0)
+    to:
+      - result
+      - .java.lang.String#<string-bytes>#byte[]
+
 - function: java.lang.String#format
   signature: (java.lang.String, java.lang.Object[]) java.lang.String
   copy:
@@ -2083,7 +1952,7 @@ passThrough:
     to: result
   - from:
     - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
+    - .java.lang.String#<string-bytes>#byte[]
     to: result
 - function: java.lang.String#getBytes
   signature: (java.lang.String) byte[]
@@ -2092,7 +1961,7 @@ passThrough:
     to: result
   - from:
     - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
+    - .java.lang.String#<string-bytes>#byte[]
     to: result
 - function: java.lang.String#getBytes
   signature: (java.nio.charset.Charset) byte[]
@@ -2101,35 +1970,35 @@ passThrough:
     to: result
   - from:
     - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
+    - .java.lang.String#<string-bytes>#byte[]
     to: result
 - function: java.lang.String#getBytes
   signature: (byte[], int, byte) void
   copy:
   - from: this
-    to: result
+    to: arg(0)
   - from:
     - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
-    to: result
+    - .java.lang.String#<string-bytes>#byte[]
+    to: arg(0)
 - function: java.lang.String#getBytes
   signature: (int, int, byte[], int) void
   copy:
   - from: this
-    to: result
+    to: arg(2)
   - from:
     - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
-    to: result
+    - .java.lang.String#<string-bytes>#byte[]
+    to: arg(2)
 - function: java.lang.String#getBytes
   signature: (byte[], int, int, byte, int) void
   copy:
   - from: this
-    to: result
+    to: arg(0)
   - from:
     - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
-    to: result
+    - .java.lang.String#<string-bytes>#byte[]
+    to: arg(0)
 - function: java.lang.String#getBytes
   signature:
     params:
@@ -2144,7 +2013,7 @@ passThrough:
   copy:
   - from:
     - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
+    - .java.lang.String#<string-bytes>#byte[]
     to: arg(2)
   - from: this
     to: arg(2)
@@ -2162,7 +2031,7 @@ passThrough:
   copy:
   - from:
     - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
+    - .java.lang.String#<string-bytes>#byte[]
     to: arg(2)
   - from: this
     to: arg(2)
@@ -2170,10 +2039,6 @@ passThrough:
   signature: () java.lang.String
   copy:
   - from: this
-    to: result
-  - from:
-    - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
     to: result
 - function: java.lang.String#join
   signature: (java.lang.CharSequence, java.lang.CharSequence[]) java.lang.String
@@ -2195,46 +2060,30 @@ passThrough:
   signature: (java.lang.String) java.lang.String[]
   copy:
   - from: this
-    to: result
-  - from:
-    - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
-    to: result
+    to:
+      - result
+      - '[*]'
 - function: java.lang.String#split
   signature: (java.lang.String, int) java.lang.String[]
   copy:
   - from: this
-    to: result
-  - from:
-    - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
-    to: result
+    to:
+      - result
+      - '[*]'
 - function: java.lang.String#subSequence
   signature: (int, int) java.lang.CharSequence
   copy:
   - from: this
-    to: result
-  - from:
-    - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
     to: result
 - function: java.lang.String#substring
   signature: (int) java.lang.String
   copy:
   - from: this
     to: result
-  - from:
-    - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
-    to: result
 - function: java.lang.String#substring
   signature: (int, int) java.lang.String
   copy:
   - from: this
-    to: result
-  - from:
-    - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
     to: result
 - function: java.lang.String#toCharArray
   signature: () char[]
@@ -2243,25 +2092,17 @@ passThrough:
     to: result
   - from:
     - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
+    - .java.lang.String#<string-bytes>#byte[]
     to: result
 - function: java.lang.String#toLowerCase
   signature: () java.lang.String
   copy:
   - from: this
     to: result
-  - from:
-    - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
-    to: result
 - function: java.lang.String#toLowerCase
   signature: (java.util.Locale) java.lang.String
   copy:
   - from: this
-    to: result
-  - from:
-    - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
     to: result
 - function:
     package: java.lang
@@ -2272,10 +2113,6 @@ passThrough:
   copy:
     - from: this
       to: result
-    - from:
-        - this
-        - .java.lang.String#<rule-storage>#java.lang.Object
-      to: result
 - function:
     package: java.lang
     class: String
@@ -2285,15 +2122,7 @@ passThrough:
   copy:
     - from: arg(1)
       to: result
-    - from:
-        - arg(1)
-        - .java.lang.String#<rule-storage>#java.lang.Object
-      to: result
     - from: this
-      to: result
-    - from:
-        - this
-        - .java.lang.String#<rule-storage>#java.lang.Object
       to: result
 - function:
     package: java.lang
@@ -2304,15 +2133,7 @@ passThrough:
   copy:
     - from: arg(1)
       to: result
-    - from:
-        - arg(1)
-        - .java.lang.CharSequence#<rule-storage>#java.lang.Object
-      to: result
     - from: this
-      to: result
-    - from:
-        - this
-        - .java.lang.String#<rule-storage>#java.lang.Object
       to: result
 - function: java.lang.String#toString
   signature: () java.lang.String
@@ -2320,36 +2141,20 @@ passThrough:
   copy:
   - from: this
     to: result
-  - from:
-    - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
-    to: result
 - function: java.lang.String#toUpperCase
   signature: () java.lang.String
   copy:
   - from: this
-    to: result
-  - from:
-    - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
     to: result
 - function: java.lang.String#toUpperCase
   signature: (java.util.Locale) java.lang.String
   copy:
   - from: this
     to: result
-  - from:
-    - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
-    to: result
 - function: java.lang.String#trim
   signature: () java.lang.String
   copy:
   - from: this
-    to: result
-  - from:
-    - this
-    - .java.lang.String#<rule-storage>#java.lang.Object
     to: result
 - function: java.lang.String#valueOf
   signature: (char) java.lang.String
@@ -68073,3 +67878,60 @@ passThrough:
   copy:
   - from: arg(*)
     to: result
+- function: org.yaml.snakeyaml.Yaml#load
+  copy:
+    - from: arg(0)
+      to: result
+    - from:
+        - arg(0)
+        - .java.lang.String#<serialized-value>#java.lang.Object
+      to: result
+- function: org.yaml.snakeyaml.Yaml#loadAs
+  copy:
+    - from: arg(0)
+      to: result
+    - from:
+        - arg(0)
+        - .java.lang.String#<serialized-value>#java.lang.Object
+      to: result
+- function: org.yaml.snakeyaml.Yaml#loadAll
+  copy:
+    - from: arg(0)
+      to:
+        - result
+        - .java.lang.Object#Element#java.lang.Object
+    - from:
+        - arg(0)
+        - .java.lang.String#<serialized-value>#java.lang.Object
+      to:
+        - result
+        - .java.lang.Object#Element#java.lang.Object
+
+- function: com.alibaba.fastjson.JSON#parse
+  copy:
+    - from: arg(0)
+      to: result
+    - from:
+        - arg(0)
+        - .java.lang.String#<serialized-value>#java.lang.Object
+      to: result
+- function: com.alibaba.fastjson.JSON#parseObject
+  copy:
+    - from: arg(0)
+      to: result
+    - from:
+        - arg(0)
+        - .java.lang.String#<serialized-value>#java.lang.Object
+      to: result
+- function: com.alibaba.fastjson.JSON#parseArray
+  copy:
+    - from: arg(0)
+      to:
+        - result
+        - .java.lang.Object#Element#java.lang.Object
+    - from:
+        - arg(0)
+        - .java.lang.String#<serialized-value>#java.lang.Object
+      to:
+        - result
+        - .java.lang.Object#Element#java.lang.Object
