@@ -1,4 +1,8 @@
 ## 2025.12.26
+### fix: Correct SARIF for simple traces and MapKey/MapValue issues
+- Fix SARIF for simple traces
+- Fix MapKey/MapValue
+## 2025.12.26
 ### fix: resolve trace issues, optimize span resolver, and update SARIF handling
 - Remove unreachable trace roots
 - Fix trace resolver
