@@ -1,3 +1,15 @@
+## 2026.01.15
+### feat: Enhance Kotlin support, fix controllers, update IR, remove Docker
+- Fix kotlin suspend spring controllers handling
+- Improve span resolution for assignments
+- Remove docker
+- Skip inlined locations with no source
+- Update ir
+- Better kotlin support
+- Use package name in class name resolver
+- Add option to generate sarif fingerprints
+- Fix Sarif tool description messages
+- Fix method summaries selector in trace resolver
 ## 2025.12.26
 ### fix: Correct SARIF for simple traces and MapKey/MapValue issues
 - Fix SARIF for simple traces
