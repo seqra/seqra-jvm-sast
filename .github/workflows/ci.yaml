@@ -84,6 +84,7 @@ jobs:
           retention-days: 1
 
   ci-owasp:
+    if: ${{ vars.SEQRA_SAST_CONTAINER_CI }}
     runs-on: ubuntu-latest
     container: cruizba/ubuntu-dind:focal-25.0.3
     permissions:
