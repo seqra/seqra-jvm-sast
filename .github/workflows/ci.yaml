@@ -7,8 +7,8 @@ on:
     branches: [ "main" ]
 
 env:
-  RULES_VERSION: v2.1.0
-  EXPECTED_TRACES: 8783
+  RULES_VERSION: v2.1.1
+  EXPECTED_TRACES: 8785
 
 jobs:
   ci-basic:

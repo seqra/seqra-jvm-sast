@@ -1,3 +1,9 @@
+## 2026.01.21
+### feat: Add JDK support, model params, and fix trace/config issues
+- Fix trace resolver
+- Update ir: add support for newer jdk
+- Support model attribute controller params
+- Fix config types
 ## 2026.01.15
 ### feat: Enhance Kotlin support, fix controllers, update IR, remove Docker
 - Fix kotlin suspend spring controllers handling
