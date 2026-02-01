@@ -1,3 +1,8 @@
+## 2026.02.01
+### feat: Add Path#of config, update IR, and add resolve transformer
+- Add java.nio.file.Path#of config
+- Update ir
+- Add properties resolve transformer
 ## 2026.01.21
 ### feat: Add JDK support, model params, and fix trace/config issues
 - Fix trace resolver
