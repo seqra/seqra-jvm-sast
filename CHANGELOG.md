@@ -1,4 +1,7 @@
 ## 2026.02.06
+### feat: Bump version
+- feat: Bump version
+## 2026.02.06
 ### fix: Resolve config issues, vulnerabilities, and update CI setup
 - Fix inner calls resolving
 - Fix SpringRuleProvider and several config rules
