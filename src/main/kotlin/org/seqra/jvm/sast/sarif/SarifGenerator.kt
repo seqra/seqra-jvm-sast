@@ -30,6 +30,7 @@ import org.seqra.ir.api.jvm.cfg.JIRValue
 import org.seqra.jvm.sast.JIRSourceFileResolver
 import org.seqra.jvm.sast.ast.JavaAstSpanResolver
 import org.seqra.jvm.sast.project.SarifGenerationOptions
+import org.seqra.jvm.sast.project.servlet.ServletAnnotator
 import org.seqra.jvm.sast.project.spring.SpringAnnotator
 import org.seqra.semgrep.pattern.RuleMetadata
 import java.io.OutputStream
@@ -47,7 +48,10 @@ class SarifGenerator(
 ) {
     private val spanResolver = JavaAstSpanResolver(traits as JIRSarifTraits)
     private val locationResolver = LocationResolver(sourceFileResolver, traits, spanResolver)
-    private val springAnnotator = SpringAnnotator(sourceFileResolver as JIRSourceFileResolver, spanResolver)
+    private val annotators = listOf(
+        SpringAnnotator(sourceFileResolver as JIRSourceFileResolver, spanResolver),
+        ServletAnnotator(sourceFileResolver, spanResolver),
+    )
 
     private val json = Json {
         prettyPrint = true
@@ -68,7 +72,7 @@ class SarifGenerator(
         traces: Sequence<VulnerabilityWithTrace>,
         metadatas: List<RuleMetadata>
     ) {
-        val sarifResults = traces.map { generateSarifResult(it.vulnerability, it.trace) }
+        val sarifResults = traces.mapNotNull { generateSarifResult(it.vulnerability, it.trace) }
 
         val uriBase = options.uriBase ?: sourceRoot?.absolutePathString()
         val sourceUri = uriBase?.let {
@@ -88,7 +92,7 @@ class SarifGenerator(
     private fun generateSarifResult(
         vulnerability: TaintSinkTracker.TaintVulnerability,
         trace: TraceResolver.Trace?
-    ): Result {
+    ): Result? {
         val vulnerabilityRule = vulnerability.rule
         val ruleId = vulnerabilityRule.id
         val ruleMessage = Message(text = vulnerabilityRule.meta.message)
@@ -100,6 +104,10 @@ class SarifGenerator(
 
         val sinkType = if (vulnerabilityRule is TaintMethodEntrySink) LocationType.RuleMethodEntry else LocationType.Simple
         val sinkLocation = statementLocation(vulnerability.statement, sinkType)
+            ?: run {
+                logger.error("Invalid vulnerability location: $vulnerability")
+                return null
+            }
 
         val tracePaths = generateTracePaths(trace)
         val threadFlows = tracePaths?.map { generateThreadFlow(it, vulnerabilityRule.meta.message) }
@@ -126,10 +134,16 @@ class SarifGenerator(
             locations = listOf(resolvedSinkLocation),
             codeFlows = listOfNotNull(resolvedThreadFlows?.let { CodeFlow(threadFlows = it) })
         )
-        result = springAnnotator.annotateSarifWithSpringRelatedInformation(result, vulnerability, trace, tracePaths.orEmpty()) { s ->
-            val loc = statementLocation(s, LocationType.SpringRelated)
-            locationResolver.generateSarifLocation(loc)
+
+        for (annotator in annotators) {
+            result = annotator.annotateSarif(result, vulnerability, trace, tracePaths.orEmpty()) { s ->
+                val loc = statementLocation(s, LocationType.WebInfoRelated)
+                    ?: return@annotateSarif null
+
+                locationResolver.generateSarifLocation(loc)
+            }
         }
+
         return result
     }
 
@@ -319,14 +333,21 @@ class SarifGenerator(
         )
     }
 
-    private fun statementLocation(statement: CommonInst, type: LocationType): IntermediateLocation =
-        IntermediateLocation(
+    private fun statementLocation(statement: CommonInst, type: LocationType): IntermediateLocation? {
+        if (TraceMessageBuilder.isGeneratedLocation(statement)) {
+            val normalLocation = TraceMessageBuilder.tryResolveNormalLocation(statement)
+                ?: return null
+            return statementLocation(normalLocation, type)
+        }
+
+        return IntermediateLocation(
             inst = statement,
             info = getInstructionInfo(statement),
             kind = "",
             message = null,
             type = type,
         )
+    }
 
     companion object {
         val logger = object : KLogging() {}.logger

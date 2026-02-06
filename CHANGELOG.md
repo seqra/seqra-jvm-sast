@@ -1,3 +1,10 @@
+## 2026.02.06
+### fix: Resolve config issues, vulnerabilities, and update CI setup
+- Fix inner calls resolving
+- Fix SpringRuleProvider and several config rules
+- Annotate Servlet controllers
+- Handle vulnerabilities with generated locations
+- Fix tree summary storage with Any accessor
 ## 2026.02.01
 ### feat: Add Path#of config, update IR, and add resolve transformer
 - Add java.nio.file.Path#of config

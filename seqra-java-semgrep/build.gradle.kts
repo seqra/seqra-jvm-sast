@@ -1,3 +1,4 @@
+import SeqraConfigDependency.seqraConfig
 import SeqraConfigurationDependency.seqraRulesJvm
 import SeqraUtilDependency.seqraUtilJvm
 import org.seqra.common.KotlinDependency
@@ -23,6 +24,7 @@ dependencies {
     implementation("org.seqra.seqra-dataflow-core:seqra-jvm-dataflow")
     implementation(seqraRulesJvm)
     implementation(seqraUtilJvm)
+    implementation(seqraConfig)
 
     implementation(KotlinDependency.Libs.kaml)
 
@@ -56,11 +58,6 @@ tasks.withType<Test> {
 
     val testSamplesJar = testSamples.resolve().single()
     environment("TEST_SAMPLES_JAR", testSamplesJar.absolutePath)
-
-    val configFile = rootProject.layout.projectDirectory.file("config/config.yaml")
-    if (configFile.asFile.exists()) {
-        environment("TAINT_CONFIGURATION", configFile.asFile.absolutePath)
-    }
 
     jvmArgs = listOf("-Xmx4g")
 }

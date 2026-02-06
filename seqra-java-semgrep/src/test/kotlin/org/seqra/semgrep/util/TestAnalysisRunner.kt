@@ -1,13 +1,13 @@
 package org.seqra.semgrep.util
 
 import kotlinx.coroutines.runBlocking
+import org.seqra.config.ConfigLoader
 import org.seqra.dataflow.ap.ifds.TaintAnalysisUnitRunnerManager
 import org.seqra.dataflow.ap.ifds.access.AnyAccessorUnrollStrategy
 import org.seqra.dataflow.ap.ifds.access.tree.TreeApManager
 import org.seqra.dataflow.ap.ifds.trace.TraceResolver
 import org.seqra.dataflow.ap.ifds.trace.VulnerabilityWithTrace
 import org.seqra.dataflow.configuration.jvm.serialized.SerializedTaintConfig
-import org.seqra.dataflow.configuration.jvm.serialized.loadSerializedTaintConfig
 import org.seqra.dataflow.ifds.SingletonUnit
 import org.seqra.dataflow.ifds.UnitResolver
 import org.seqra.dataflow.ifds.UnknownUnit
@@ -24,7 +24,6 @@ import org.seqra.ir.api.jvm.JIRClasspath
 import org.seqra.ir.api.jvm.JIRMethod
 import org.seqra.ir.impl.features.classpaths.UnknownClasses
 import org.seqra.ir.impl.features.usagesExt
-import org.seqra.ir.util.io.inputStream
 import org.seqra.jvm.graph.JApplicationGraphImpl
 import org.seqra.jvm.sast.dataflow.DummySerializationContext
 import org.seqra.jvm.sast.dataflow.JIRMethodExitRuleProvider
@@ -33,7 +32,6 @@ import org.seqra.jvm.sast.dataflow.rules.TaintConfiguration
 import org.seqra.jvm.transformer.JMultiDimArrayAllocationTransformer
 import org.seqra.jvm.transformer.JStringConcatTransformer
 import org.seqra.util.analysis.ApplicationGraph
-import java.nio.file.Path
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
@@ -87,7 +85,7 @@ class TestAnalysisRunner(
 
     fun run(
         config: SerializedTaintConfig,
-        configurationPath: Path?,
+        useDefaultConfig: Boolean,
         samples: Set<String>
     ): Map<String, List<VulnerabilityWithTrace>> =
         samples.associate { sample ->
@@ -95,7 +93,7 @@ class TestAnalysisRunner(
             val ep = cls.declaredMethods.singleOrNull { it.name == "entrypoint" }
                 ?: error("No entrypoint in $sample")
 
-            val rulesProvider = rulesProvider(config, configurationPath, hashSetOf(ep))
+            val rulesProvider = rulesProvider(config, useDefaultConfig, hashSetOf(ep))
             setupEngine(rulesProvider).use { engine ->
                 engine.runAnalysis(listOf(ep), timeout = 1.minutes, cancellationTimeout = 10.seconds)
 
@@ -118,16 +116,14 @@ class TestAnalysisRunner(
 
     private fun rulesProvider(
         config: SerializedTaintConfig,
-        configurationPath: Path?,
+        useDefaultConfig: Boolean,
         ep: Set<JIRMethod>
     ): TaintRulesProvider {
         val taintConfig = TaintConfiguration(cp)
         taintConfig.loadConfig(config)
 
-        if (configurationPath != null) {
-            val defaultConfig = configurationPath.inputStream().use {
-                loadSerializedTaintConfig(it)
-            }
+        if (useDefaultConfig) {
+            val defaultConfig = ConfigLoader.getConfig() ?: error("Error while loading default config")
 
             val defaultPassRules = SerializedTaintConfig(passThrough = defaultConfig.passThrough)
             taintConfig.loadConfig(defaultPassRules)

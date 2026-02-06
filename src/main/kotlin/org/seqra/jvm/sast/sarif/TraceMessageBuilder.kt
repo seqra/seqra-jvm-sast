@@ -1,7 +1,7 @@
 package org.seqra.jvm.sast.sarif
 
-import org.objectweb.asm.Opcodes
 import mu.KLogging
+import org.objectweb.asm.Opcodes
 import org.seqra.dataflow.ap.ifds.AccessPathBase
 import org.seqra.dataflow.ap.ifds.access.InitialFactAp
 import org.seqra.dataflow.ap.ifds.trace.MethodTraceResolver.TraceEdge
@@ -9,6 +9,7 @@ import org.seqra.dataflow.ap.ifds.trace.MethodTraceResolver.TraceEntry
 import org.seqra.dataflow.ap.ifds.trace.MethodTraceResolver.TraceEntryAction
 import org.seqra.dataflow.configuration.jvm.RemoveAllMarks
 import org.seqra.dataflow.configuration.jvm.RemoveMark
+import org.seqra.dataflow.jvm.ap.ifds.LambdaAnonymousClassFeature.JIRLambdaClass
 import org.seqra.dataflow.jvm.ap.ifds.LambdaAnonymousClassFeature.JIRLambdaMethod
 import org.seqra.dataflow.util.SarifTraits
 import org.seqra.ir.api.common.CommonMethod
@@ -261,10 +262,6 @@ class TraceMessageBuilder(
                 return false
         }
 
-        // filtering instructions inserted for lambda invocations
-        if (node.getMethod() is JIRLambdaMethod)
-            return false
-
         val entry = node.entry as? TraceEntry.Action ?: return true
 
         val primaryAction = entry.primaryAction
@@ -315,12 +312,6 @@ class TraceMessageBuilder(
         }
 
         return true
-    }
-
-    private fun isGeneratedLocation(stmt: CommonInst): Boolean {
-        val locationMethod = stmt.location.method
-        if (locationMethod is SpringGeneratedMethod) return true
-        return false
     }
 
     private fun createEntryMessage(node: TracePathNode) =
@@ -1044,5 +1035,21 @@ class TraceMessageBuilder(
         private val artificialLambdaClassMark = "jIR_lambda$"
 
         val logger = object : KLogging() {}.logger
+
+        fun isGeneratedLocation(stmt: CommonInst): Boolean {
+            val locationMethod = stmt.location.method
+            if (locationMethod is SpringGeneratedMethod) return true
+            if (locationMethod is JIRLambdaMethod) return true
+            return false
+        }
+
+        fun tryResolveNormalLocation(stmt: CommonInst): CommonInst? {
+            val locationMethod = stmt.location.method
+            if (locationMethod is JIRLambdaMethod) {
+                val lambdaCreationLocation = (locationMethod.enclosingClass as JIRLambdaClass).lambdaLocation
+                return lambdaCreationLocation.method.instList.getOrNull(lambdaCreationLocation.index)
+            }
+            return null
+        }
     }
 }

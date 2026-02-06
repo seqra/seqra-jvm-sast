@@ -2,6 +2,7 @@ package org.seqra.jvm.sast.dataflow
 
 import kotlinx.coroutines.runBlocking
 import mu.KLogging
+import org.seqra.dataflow.ap.ifds.AccessPathBase
 import org.seqra.dataflow.ap.ifds.Accessor
 import org.seqra.dataflow.ap.ifds.AnyAccessor
 import org.seqra.dataflow.ap.ifds.ElementAccessor
@@ -18,6 +19,7 @@ import org.seqra.dataflow.ap.ifds.access.cactus.CactusApManager
 import org.seqra.dataflow.ap.ifds.access.tree.TreeApManager
 import org.seqra.dataflow.ap.ifds.serialization.SummarySerializationContext
 import org.seqra.dataflow.ap.ifds.taint.TaintSinkTracker
+import org.seqra.dataflow.ap.ifds.trace.MethodTraceResolver.TraceEntryAction.TraceSummaryEdge
 import org.seqra.dataflow.ap.ifds.trace.TraceResolver
 import org.seqra.dataflow.ap.ifds.trace.VulnerabilityWithTrace
 import org.seqra.dataflow.configuration.jvm.TaintSinkMeta
@@ -162,6 +164,13 @@ class JIRTaintAnalyzer(
         return filteredVulnerabilities
     }
 
+    private object InnerCallTraceResolveStrategy : TraceResolver.InnerCallTraceResolveStrategy {
+        override fun innerCallSummaryEdgeIsRelevant(summaryEdge: TraceSummaryEdge): Boolean {
+            if (summaryEdge.edge.fact.base is AccessPathBase.ClassStatic) return false
+            return super.innerCallSummaryEdgeIsRelevant(summaryEdge)
+        }
+    }
+
     private fun TaintAnalysisUnitRunnerManager.generateTraces(
         entryPoints: List<JIRMethod>,
         vulnerabilities: List<TaintSinkTracker.TaintVulnerability>,
@@ -175,6 +184,7 @@ class JIRTaintAnalyzer(
                 startToSourceTraceResolutionLimit = 100,
                 startToSinkTraceResolutionLimit = 100,
                 sourceToSinkInnerTraceResolutionLimit = 5,
+                innerCallTraceResolveStrategy = InnerCallTraceResolveStrategy
             ),
             timeout = timeout,
             cancellationTimeout = 30.seconds

@@ -1,3 +1,4 @@
+import SeqraConfigDependency.seqraConfig
 import SeqraConfigurationDependency.seqraRulesJvm
 import SeqraIrDependency.seqra_ir_api_jvm
 import SeqraIrDependency.seqra_ir_api_storage
@@ -22,6 +23,7 @@ dependencies {
     implementation(seqraUtilCli)
     implementation(seqraProject)
     implementation(seqraRulesJvm)
+    implementation(seqraConfig)
 
     implementation("org.seqra.seqra-dataflow-core:seqra-jvm-dataflow")
     implementation("org.seqra.sast.se:api")
@@ -101,16 +103,6 @@ fun ShadowJar.jarWithDependencies(name: String, mainClass: String) {
     mergeServiceFiles()
 
     with(tasks.jar.get() as CopySpec)
-}
-
-tasks.withType<ProcessResources> {
-    val configFile = layout.projectDirectory.file("config/config.yaml")
-
-    doLast {
-        check(configFile.asFile.exists()) { "Configuration file not found" }
-    }
-
-    from(configFile)
 }
 
 fun analyzerEnvironment(): Map<String, Any> {
