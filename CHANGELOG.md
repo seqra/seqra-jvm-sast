@@ -1,3 +1,13 @@
+## 2026.02.12
+### feat: Add inter-procedural alias analysis
+- Resolved an edge-case cause affecting the non-user cleaner
+- Corrected Spring component initialization order
+- Added a Spring test example
+- Renamed `thread-flow-limit` to `code-flow-limit`
+- Improved config rule matching for inner classes containing .
+- Fixed configuration loading on Windows
+- Disabled aliases for method summaries with no memory impact
+- Enabled inter-procedural AA
 ## 2026.02.06
 ### feat: Bump version
 - feat: Bump version

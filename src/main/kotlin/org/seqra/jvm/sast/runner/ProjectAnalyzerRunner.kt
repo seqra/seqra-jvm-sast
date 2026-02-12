@@ -47,7 +47,7 @@ class ProjectAnalyzerRunner : AbstractAnalyzerRunner() {
     private val sarifFileName: String by option(help = "Sarif file name")
         .default(SarifGenerationOptions.DEFAULT_FILE_NAME)
 
-    private val sarifThreadFlowLimit: Int? by option(help = "Sarif thread flow limit").int()
+    private val sarifCodeFlowLimit: Int? by option(help = "Sarif code flow limit").int()
 
     private val sarifSemgrepStyleId: Boolean by option(help = "Use semgrep style ids").flag()
 
@@ -62,6 +62,9 @@ class ProjectAnalyzerRunner : AbstractAnalyzerRunner() {
 
     private val sarifUriBase: String? by option(help = "Sarif sources root uri")
 
+    private val experimentalAAInterProcCallDepth: Int by option(help = "Experimental options: inter-proc alias analysis call depth")
+        .int().default(1)
+
     override fun analyzeProject(project: Project, analyzerOutputDir: Path, debugOptions: DebugOptions) {
         if (project.modules.isEmpty()) {
             return
@@ -69,7 +72,7 @@ class ProjectAnalyzerRunner : AbstractAnalyzerRunner() {
 
         val sarifOptions = SarifGenerationOptions(
             sarifFileName = sarifFileName,
-            sarifThreadFlowLimit = sarifThreadFlowLimit,
+            sarifCodeFlowLimit = sarifCodeFlowLimit,
             useSemgrepStyleId = sarifSemgrepStyleId,
             toolVersion = sarifToolVersion,
             toolSemanticVersion = sarifToolSemanticVersion,
@@ -89,6 +92,7 @@ class ProjectAnalyzerRunner : AbstractAnalyzerRunner() {
             ifdsApMode = ifdsApMode,
             projectKind = projectKind,
             storeSummaries = true,
+            experimentalAAInterProcCallDepth = experimentalAAInterProcCallDepth,
             debugOptions = debugOptions,
             sarifGenerationOptions = sarifOptions,
         )

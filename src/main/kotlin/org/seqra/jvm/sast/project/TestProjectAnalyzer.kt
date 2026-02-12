@@ -16,6 +16,7 @@ import org.seqra.jvm.sast.dataflow.JIRTaintAnalyzer
 import org.seqra.jvm.sast.project.rules.analysisConfig
 import org.seqra.jvm.sast.project.rules.loadSemgrepRules
 import org.seqra.jvm.sast.project.rules.semgrepRulesWithDefaultConfig
+import org.seqra.jvm.sast.project.spring.springWebProjectEntryPoints
 import org.seqra.jvm.sast.sarif.SarifGenerator
 import org.seqra.project.Project
 import org.seqra.semgrep.pattern.SemgrepRuleUtils
@@ -23,6 +24,7 @@ import org.seqra.semgrep.pattern.TaintRuleFromSemgrep
 import java.nio.file.Path
 import kotlin.io.path.div
 import kotlin.io.path.outputStream
+import kotlin.io.path.relativeTo
 
 class TestProjectAnalyzer(
     project: Project,
@@ -30,7 +32,7 @@ class TestProjectAnalyzer(
     providedOptions: ProjectAnalysisOptions,
 ) {
     private val options = providedOptions.copy(storeSummaries = false)
-    private val projectAnalysisContext = initializeProjectAnalysisContext(project, options)
+    private val projectAnalysisContexts = initializeProjectModulesAnalysisContexts(project, options)
     private val loadedRules = options.loadSemgrepRules()
 
     @Serializable
@@ -53,13 +55,19 @@ class TestProjectAnalyzer(
     )
 
     fun analyze() {
-        projectAnalysisContext.use {
-            val testSamples = it.allProjectTestSamples()
-            it.analyzeTestSamples(testSamples)
+        val results = projectAnalysisContexts.map { (module, ctx) ->
+            val testSetName = ctx.project.sourceRoot?.let { srcRoot ->
+                module.moduleSourceRoot?.relativeTo(srcRoot)?.toString()
+            }.orEmpty().replace('/', '-')
+
+            val testSamples = ctx.allProjectTestSamples(testSetName)
+            ctx.analyzeTestSamples(testSamples, testSetName)
         }
+
+        writeTestResult(results.joinResults())
     }
 
-    private fun ProjectAnalysisContext.allProjectTestSamples(): List<TestSample> {
+    private fun ProjectAnalysisContext.allProjectTestSamples(testSetName: String): List<TestSample> {
         val samples = mutableListOf<TestSample>()
 
         val classes = projectClasses.allProjectClasses()
@@ -76,10 +84,20 @@ class TestProjectAnalyzer(
                 MethodTestSample(it, sample)
             }
 
-        return samples
+        if (!testSetName.isSpringAppTestSet()) return samples
+
+        logger.info { "Detect spring test set: $testSetName" }
+
+        val springEp = springWebProjectContext?.springWebProjectEntryPoints()?.takeIf { it.isNotEmpty() }
+        if (springEp == null) {
+            logger.error { "No spring entry point found: $testSetName" }
+            return samples
+        }
+
+        return samples.map { SpringTestSample(springEp, it) }
     }
 
-    private fun ProjectAnalysisContext.analyzeTestSamples(testSamples: List<TestSample>) {
+    private fun ProjectAnalysisContext.analyzeTestSamples(testSamples: List<TestSample>, testSetName: String): TestResult {
         val skipped = mutableListOf<TestSample>()
         val disabled = mutableListOf<TestSample>()
 
@@ -112,10 +130,9 @@ class TestProjectAnalyzer(
             results += sample to analysisResult
         }
 
-        generateSarif(results.flatMap { it.second })
+        generateSarif(results.flatMap { it.second }, testSetName)
 
-        val testResult = generateTestResult(skipped, disabled, results)
-        writeTestResult(testResult)
+        return generateTestResult(skipped, disabled, results)
     }
 
     private sealed interface RuleSelectResult {
@@ -211,16 +228,24 @@ class TestProjectAnalyzer(
         )
     }
 
-    private fun ProjectAnalysisContext.generateSarif(traces: List<VulnerabilityWithTrace>) {
+    private fun ProjectAnalysisContext.generateSarif(traces: List<VulnerabilityWithTrace>, testSetName: String) {
         val sourcesResolver = project.sourceResolver(projectClasses)
         val generator = SarifGenerator(
             options.sarifGenerationOptions, project.sourceRoot,
             sourcesResolver, JIRSarifTraits(cp)
         )
-        (resultDir / options.sarifGenerationOptions.sarifFileName).outputStream().use { out ->
+        (resultDir / (testSetName + options.sarifGenerationOptions.sarifFileName)).outputStream().use { out ->
             generator.generateSarif(out, traces.asSequence(), loadedRules.rulesWithMeta.map { it.second })
         }
     }
+
+    private fun List<TestResult>.joinResults(): TestResult = TestResult(
+        success = flatMap { it.success },
+        falseNegative = flatMap { it.falseNegative },
+        falsePositive = flatMap { it.falsePositive },
+        skipped = flatMap { it.skipped },
+        disabled = flatMap { it.disabled },
+    )
 
     @OptIn(ExperimentalSerializationApi::class)
     private fun writeTestResult(testResult: TestResult) {
@@ -261,6 +286,14 @@ class TestProjectAnalyzer(
         )
     }
 
+    private data class SpringTestSample(
+        override val methods: List<JIRMethod>,
+        val original: TestSample,
+    ) : TestSample {
+        override val info: SampleInfo get() = original.info
+        override fun toTestInfo(): TestSampleInfo = original.toTestInfo()
+    }
+
     private fun JIRAnnotated.findSampleAnnotation(): SampleInfo? {
         val positive = annotations.filter { it.name == POSITIVE_SAMPLE_ANNOTATION_NAME }
         val negative = annotations.filter { it.name == NEGATIVE_SAMPLE_ANNOTATION_NAME }
@@ -296,5 +329,7 @@ class TestProjectAnalyzer(
 
         private const val POSITIVE_SAMPLE_ANNOTATION_NAME = "org.seqra.sast.test.util.PositiveRuleSample"
         private const val NEGATIVE_SAMPLE_ANNOTATION_NAME = "org.seqra.sast.test.util.NegativeRuleSample"
+
+        private fun String.isSpringAppTestSet(): Boolean = startsWith("spring-app-tests")
     }
 }

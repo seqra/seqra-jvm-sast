@@ -26,6 +26,7 @@ import org.seqra.dataflow.configuration.jvm.TaintSinkMeta
 import org.seqra.dataflow.ifds.UnitResolver
 import org.seqra.dataflow.ifds.UnitType
 import org.seqra.dataflow.ifds.UnknownUnit
+import org.seqra.dataflow.jvm.ap.ifds.JIRLocalAliasAnalysis
 import org.seqra.dataflow.jvm.ap.ifds.JIRSafeApplicationGraph
 import org.seqra.dataflow.jvm.ap.ifds.LambdaAnonymousClassFeature
 import org.seqra.dataflow.jvm.ap.ifds.analysis.JIRAnalysisManager
@@ -84,9 +85,13 @@ class JIRTaintAnalyzer(
         }
     }
 
+    private val aaParams get() = JIRLocalAliasAnalysis.Params(
+        aliasAnalysisInterProcCallDepth = options.experimentalAAInterProcCallDepth
+    )
+
     @Suppress("UNCHECKED_CAST")
     private fun createIfdsEngine() = TaintAnalysisUnitRunnerManager(
-        JIRAnalysisManager(cp),
+        JIRAnalysisManager(cp, aaParams),
         ifdsAnalysisGraph as ApplicationGraph<CommonMethod, CommonInst>,
         analysisUnit as UnitResolver<CommonMethod>,
         taintConfig,
